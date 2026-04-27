@@ -21,9 +21,9 @@ const Q32_ONE_I64: i64 = 1i64 << 32;
 
 const Q64_ONE_I128: i128 = 1i128 << 64;
 
-const FUNDING_DEADBAND_Q32: i64 = Q32_ONE_I64 / 10_000;
+const FUNDING_DEADBAND_Q32: i64 = (Q32_ONE_I64 / 10_000) * 5;
 
-const MAX_FUNDING_PREMIUM_Q32: i64 = Q32_ONE_I64 / 10;
+const MAX_FUNDING_PREMIUM_Q32: i64 = (Q32_ONE_I64 / 10_000) * 300;
 
 #[inline(always)]
 fn clamp_funding_premium_q32(premium_q32: i64) -> i64 {
@@ -36,4 +36,16 @@ fn clamp_funding_premium_q32(premium_q32: i64) -> i64 {
         return 0;
     }
     premium_q32.clamp(-MAX_FUNDING_PREMIUM_Q32, MAX_FUNDING_PREMIUM_Q32)
+}
+
+const FUNDING_RATE_CAP_Q64_64: i128 = (Q64_ONE_I128 / 10_000) * 10;
+
+#[inline(always)]
+pub fn div_i128_trunc_toward_zero(
+    numerator: i128,
+    denominator: i128,
+) -> Result<i128, ProgramError> {
+    numerator
+        .checked_div(denominator)
+        .ok_or(ProgramError::from(ColadaError::Overflow))
 }
