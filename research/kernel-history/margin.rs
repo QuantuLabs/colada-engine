@@ -55,6 +55,6 @@ fn is_margin_pair_admissible(
         && max_staleness_secs <= TIER1_MAX_STALENESS_SECS
         && max_confidence_bps > 0
         && max_confidence_bps <= TIER1_MAX_CONFIDENCE_BPS
-        && initial_margin_bps >= TIER1_INITIAL_MARGIN_BPS
-        && maintenance_margin_bps >= TIER1_MAINTENANCE_MARGIN_BPS
+        && initial_margin_bps == TIER1_INITIAL_MARGIN_BPS
+        && maintenance_margin_bps == TIER1_MAINTENANCE_MARGIN_BPS
 }
