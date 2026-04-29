@@ -44,8 +44,8 @@ fn is_margin_pair_admissible(
     if initial_margin_bps > 10_000 || maintenance_margin_bps >= initial_margin_bps {
         return false;
     }
-    if initial_margin_bps >= TIER0_INITIAL_MARGIN_BPS
-        && maintenance_margin_bps >= TIER0_MAINTENANCE_MARGIN_BPS
+    if initial_margin_bps == TIER0_INITIAL_MARGIN_BPS
+        && maintenance_margin_bps == TIER0_MAINTENANCE_MARGIN_BPS
     {
         return true;
     }
