@@ -49,3 +49,28 @@ pub fn div_i128_trunc_toward_zero(
         .checked_div(denominator)
         .ok_or(ProgramError::from(ColadaError::Overflow))
 }
+
+#[inline(always)]
+pub fn price_pnl_for_quote_notional(
+    position_size: i32,
+    close_abs_size: u64,
+    entry_price: u64,
+    execution_price: u64,
+) -> Result<i64, ProgramError> {
+    if position_size == 0 || close_abs_size == 0 || entry_price == 0 || execution_price == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let signed_close_size = if position_size > 0 {
+        i128::from(close_abs_size)
+    } else {
+        -i128::from(close_abs_size)
+    };
+    let price_diff = i128::from(execution_price)
+        .checked_sub(i128::from(entry_price))
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let pnl_numerator = price_diff
+        .checked_mul(signed_close_size)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let pnl = div_i128_floor(pnl_numerator, i128::from(entry_price))?;
+    i64::try_from(pnl).map_err(|_| ProgramError::from(ColadaError::Overflow))
+}
