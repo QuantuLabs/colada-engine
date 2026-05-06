@@ -74,3 +74,13 @@ pub fn price_pnl_for_quote_notional(
     let pnl = div_i128_floor(pnl_numerator, i128::from(entry_price))?;
     i64::try_from(pnl).map_err(|_| ProgramError::from(ColadaError::Overflow))
 }
+
+#[inline(always)]
+fn funding_rate_q64_64_from_premium_q32(premium_q32: i64) -> Result<i128, ProgramError> {
+    i128::from(premium_q32)
+        .checked_shl(32)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?
+        .checked_div(8)
+        .ok_or(ProgramError::from(ColadaError::Overflow))
+        .map(|rate| rate.clamp(-FUNDING_RATE_CAP_Q64_64, FUNDING_RATE_CAP_Q64_64))
+}
