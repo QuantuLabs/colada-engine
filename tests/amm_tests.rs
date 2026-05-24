@@ -1,7 +1,7 @@
 // End-to-end integration tests with realistic AMM matcher
 // Tests complete user journeys with multiple participants
 
-use percolator::*;
+use colada::*;
 
 fn default_params() -> RiskParams {
     RiskParams {

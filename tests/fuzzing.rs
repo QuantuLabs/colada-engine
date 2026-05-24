@@ -33,7 +33,7 @@
 
 #![cfg(feature = "fuzz")]
 
-use percolator::*;
+use colada::*;
 use proptest::prelude::*;
 
 // ============================================================================

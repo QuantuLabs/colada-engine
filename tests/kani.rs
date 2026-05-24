@@ -22,7 +22,7 @@
 
 #![cfg(kani)]
 
-use percolator::*;
+use colada::*;
 
 // Default oracle price for conservation checks
 const DEFAULT_ORACLE: u64 = 1_000_000;
@@ -89,7 +89,7 @@ fn test_params_with_maintenance_fee() -> RiskParams {
 }
 
 // ============================================================================
-// Integer Safety Helpers (match percolator.rs implementations)
+// Integer Safety Helpers (match colada.rs implementations)
 // ============================================================================
 
 /// Safely convert negative i128 to u128 (handles i128::MIN without overflow)
@@ -334,7 +334,7 @@ fn inv_accounting(engine: &RiskEngine) -> bool {
 
 /// N1 boundary condition: after settlement boundaries (settle/withdraw/deposit/trade/liquidation),
 /// either pnl >= 0 or capital == 0. This prevents unrealized losses lingering with capital.
-fn n1_boundary_holds(account: &percolator::Account) -> bool {
+fn n1_boundary_holds(account: &colada::Account) -> bool {
     account.pnl.get() >= 0 || account.capital.get() == 0
 }
 
@@ -5049,7 +5049,7 @@ fn kani_rejects_invalid_matcher_output() {
 }
 
 // ==============================================================================
-// Proofs migrated from src/percolator.rs inline kani_proofs
+// Proofs migrated from src/colada.rs inline kani_proofs
 // ==============================================================================
 
 const E6_INLINE: u64 = 1_000_000;

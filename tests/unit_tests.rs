@@ -1,7 +1,7 @@
 //! Fast unit tests for the risk engine
 //! Run with: cargo test
 
-use percolator::*;
+use colada::*;
 
 // Use the no-op matcher for tests
 const MATCHER: NoOpMatcher = NoOpMatcher;
@@ -1317,7 +1317,7 @@ fn test_audit_conservation_detects_excessive_slack() {
 
     // Artificially inflate vault beyond MAX_ROUNDING_SLACK
     // This simulates a minting bug
-    engine.vault = engine.vault + percolator::MAX_ROUNDING_SLACK + 10;
+    engine.vault = engine.vault + colada::MAX_ROUNDING_SLACK + 10;
 
     // Conservation should now FAIL due to excessive slack
     assert!(
@@ -1335,10 +1335,10 @@ fn test_audit_conservation_detects_excessive_slack() {
 /// This test guards against reintroducing ignored-Result patterns in the engine.
 /// The Solana atomicity model requires that all fallible operations propagate errors.
 /// NOTE: This test intentionally stays file-local.
-/// If percolator.rs is split, this test MUST be updated.
+/// If colada.rs is split, this test MUST be updated.
 #[test]
 fn no_ignored_result_patterns_in_engine() {
-    let src = include_str!("../src/percolator.rs");
+    let src = include_str!("../src/colada.rs");
 
     // Check for ignored Result patterns on specific functions that must propagate errors
     assert!(
@@ -2557,7 +2557,7 @@ fn test_two_phase_liquidation_priority_and_sweep() {
     // Each crank processes up to ACCOUNTS_PER_CRANK occupied accounts
     // Full sweep completes when cursor wraps around to start
 
-    use percolator::ACCOUNTS_PER_CRANK;
+    use colada::ACCOUNTS_PER_CRANK;
 
     let mut params = default_params();
     params.maintenance_margin_bps = 500; // 5%
@@ -2680,7 +2680,7 @@ fn test_window_liquidation_many_accounts_few_liquidatable() {
     // Tests that window sweep liquidation works correctly.
     // (In test mode MAX_ACCOUNTS=64, so we use proportional scaling)
 
-    use percolator::MAX_ACCOUNTS;
+    use colada::MAX_ACCOUNTS;
 
     let mut params = default_params();
     params.maintenance_margin_bps = 500; // 5%
@@ -3548,7 +3548,7 @@ fn test_check_conservation_fails_on_mark_overflow() {
 }
 
 // ==============================================================================
-// Tests migrated from src/percolator.rs inline tests
+// Tests migrated from src/colada.rs inline tests
 // ==============================================================================
 
 const E6: u64 = 1_000_000;
@@ -4000,7 +4000,7 @@ fn test_finding_l_new_position_requires_initial_margin() {
          Got {:?}", result
     );
     assert!(
-        matches!(result, Err(percolator::RiskError::Undercollateralized)),
+        matches!(result, Err(colada::RiskError::Undercollateralized)),
         "Error should be Undercollateralized"
     );
 }

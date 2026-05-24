@@ -1,21 +1,21 @@
-# Percolator: Risk Engine for Perpetual DEXs
+# Colada: Risk Engine for Perpetual DEXs
 
 ⚠️ **EDUCATIONAL RESEARCH PROJECT — NOT PRODUCTION READY** ⚠️  
 Do **NOT** use with real funds. Not audited. Experimental design.
 
-Percolator is a **formally verified accounting + risk engine** for perpetual futures DEXs on Solana.
+Colada is a **formally verified accounting + risk engine** for perpetual futures DEXs on Solana.
 
 **Primary goal:**
 
 > **No user can ever withdraw more value than actually exists on the exchange balance sheet.**
 
-Percolator **does not move tokens**. A wrapper program performs SPL transfers and calls into the engine.
+Colada **does not move tokens**. A wrapper program performs SPL transfers and calls into the engine.
 
 ---
 
 ## What kind of perp design is this?
 
-Percolator is a **hybrid**:
+Colada is a **hybrid**:
 - **Synthetics-style risk**: users take positions against **LP accounts** (inventory holders), and the engine enforces margin, liquidations, ADL/socialization, and withdrawal safety against a shared balance sheet.
 - **Orderbook-style execution extensibility**: LPs provide a **pluggable matcher program/context** (`MatchingEngine`) that can implement AMM/RFQ/CLOB logic and can **reject** trades.
 

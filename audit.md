@@ -75,7 +75,7 @@ Proof count: 107 → 125.
 Removed 6 functions unreachable from production code and their 11 associated Kani proofs.
 Modified 1 proof (`proof_lq1_liquidation_reduces_oi_and_enforces_safety`) to use `is_above_margin_bps_mtm`.
 
-**Functions removed from `src/percolator.rs`:**
+**Functions removed from `src/colada.rs`:**
 - `panic_settle_all` — not called from prod; `keeper_crank` does inline force-realize instead
 - `force_realize_losses` — not called from prod; same inline mechanism in `keeper_crank`
 - `recover_stranded_to_insurance` — no-op placeholder (`Ok(0)`), never called
@@ -223,7 +223,7 @@ propositional reduction regardless of input range). The overflow atomicity scena
 is covered by `i1c` (concrete values) and the non-overflow symbolic case by `i1`.
 
 **New proofs added**: `kani_cross_lp_close_no_pnl_teleport`, `kani_rejects_invalid_matcher_output`
-(inline in `src/percolator.rs`), `proof_variation_margin_no_pnl_teleport`, `proof_trade_pnl_zero_sum`,
+(inline in `src/colada.rs`), `proof_variation_margin_no_pnl_teleport`, `proof_trade_pnl_zero_sum`,
 `kani_no_teleport_cross_lp_close` (in `tests/kani.rs`).
 
 ---
@@ -247,7 +247,7 @@ A soundness issue was discovered in `RiskEngine::apply_adl` where an overflow er
 
 ### Location
 
-`src/percolator.rs` lines 4354-4361 in `apply_adl_impl`:
+`src/colada.rs` lines 4354-4361 in `apply_adl_impl`:
 
 ```rust
 let numer = loss_to_socialize
@@ -457,7 +457,7 @@ Three rounds of proof hardening addressed vacuity risks, naming correctness, and
 
 ### Cleanup — Dead TODO removal (`49664f7`)
 - Removed `APPLY_ADL` TODO: function does not exist (system uses haircut ratios, not ADL)
-- Removed `PS3` TODO: `panic_settle_all` is not called from percolator-prog
+- Removed `PS3` TODO: `panic_settle_all` is not called from colada-prog
 - Kept `TOP_UP_INSURANCE_FUND` TODO: function is live in production
 
 ---

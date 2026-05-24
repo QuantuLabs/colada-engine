@@ -1,12 +1,12 @@
 [package]
-name = "percolator"
+name = "colada"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
 [lib]
-name = "percolator"
-path = "src/percolator.rs"
+name = "colada"
+path = "src/colada.rs"
 
 [dependencies]
 # No runtime dependencies - pure no_std compatible library

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Full Kani audit: run all proofs one-by-one with 10-minute timeout each
 set -euo pipefail
-cd /home/anatoly/percolator
+cd /home/anatoly/colada
 
-OUTFILE="/home/anatoly/percolator/kani_audit_full.tsv"
+OUTFILE="/home/anatoly/colada/kani_audit_full.tsv"
 echo -e "proof\ttime_s\tstatus" > "$OUTFILE"
 
 PROOFS=$(grep -A5 'kani::proof' tests/kani.rs | grep '^\s*fn ' | sed 's/.*fn \([a-z_0-9]*\).*/\1/' | sort)
