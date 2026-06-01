@@ -3,6 +3,19 @@
 
 use colada::*;
 
+fn new_test_engine(params: RiskParams) -> Box<RiskEngine> {
+    let layout = std::alloc::Layout::new::<RiskEngine>();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut RiskEngine };
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+
+    unsafe {
+        (*ptr).init_in_place(params);
+        Box::from_raw(ptr)
+    }
+}
+
 // Use the no-op matcher for tests
 const MATCHER: NoOpMatcher = NoOpMatcher;
 
@@ -121,7 +134,7 @@ fn set_insurance(engine: &mut RiskEngine, new_balance: u128) {
 
 #[test]
 fn test_deposit_and_withdraw() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Deposit
@@ -147,7 +160,7 @@ fn test_deposit_and_withdraw() {
 
 #[test]
 fn test_withdraw_insufficient_balance() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     engine.deposit(user_idx, 1000, 0).unwrap();
@@ -162,7 +175,7 @@ fn test_deposit_settles_accrued_maintenance_fees() {
     // Setup engine with non-zero maintenance fee
     let mut params = default_params();
     params.maintenance_fee_per_slot = U128::new(10); // 10 units per slot
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
 
@@ -207,7 +220,7 @@ fn test_deposit_settles_accrued_maintenance_fees() {
 
 #[test]
 fn test_withdraw_principal_with_negative_pnl_should_fail() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // User deposits 1000
@@ -230,7 +243,7 @@ fn test_withdraw_principal_with_negative_pnl_should_fail() {
 
 #[test]
 fn test_pnl_warmup() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let counterparty = engine.add_user(0).unwrap();
 
@@ -265,7 +278,7 @@ fn test_pnl_warmup() {
 
 #[test]
 fn test_pnl_warmup_with_reserved() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let counterparty = engine.add_user(0).unwrap();
 
@@ -293,7 +306,7 @@ fn test_pnl_warmup_with_reserved() {
 
 #[test]
 fn test_withdraw_pnl_not_warmed_up() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let counterparty = engine.add_user(0).unwrap();
 
@@ -313,7 +326,7 @@ fn test_withdraw_pnl_not_warmed_up() {
 
 #[test]
 fn test_withdraw_with_warmed_up_pnl() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let counterparty = engine.add_user(0).unwrap();
 
@@ -350,7 +363,7 @@ fn test_withdraw_with_warmed_up_pnl() {
 }
 #[test]
 fn test_conservation_simple() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user1 = engine.add_user(0).unwrap();
     let user2 = engine.add_user(0).unwrap();
 
@@ -383,7 +396,7 @@ fn test_conservation_simple() {
 
 #[test]
 fn test_trading_opens_position() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -415,7 +428,7 @@ fn test_trading_opens_position() {
 
 #[test]
 fn test_trading_realizes_pnl() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -443,7 +456,7 @@ fn test_trading_realizes_pnl() {
 
 #[test]
 fn test_user_isolation() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user1 = engine.add_user(0).unwrap();
     let user2 = engine.add_user(0).unwrap();
 
@@ -470,7 +483,7 @@ fn test_user_isolation() {
 
 #[test]
 fn test_warmup_monotonicity() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let counterparty = engine.add_user(0).unwrap();
 
@@ -499,7 +512,7 @@ fn test_warmup_monotonicity() {
 #[test]
 fn test_fee_accumulation() {
     // WHITEBOX: direct state mutation for vault/capital setup
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -551,7 +564,7 @@ fn test_fee_accumulation() {
 
 #[test]
 fn test_lp_warmup_initial_state() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 10000).unwrap();
 
     // LP should start with warmup state initialized
@@ -561,7 +574,7 @@ fn test_lp_warmup_initial_state() {
 
 #[test]
 fn test_lp_warmup_monotonic() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 10000).unwrap();
     let user = engine.add_user(0).unwrap();
 
@@ -600,7 +613,7 @@ fn test_lp_warmup_monotonic() {
 
 #[test]
 fn test_lp_warmup_bounded() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 10000).unwrap();
     let user = engine.add_user(0).unwrap();
 
@@ -628,7 +641,7 @@ fn test_lp_warmup_bounded() {
 
 #[test]
 fn test_lp_warmup_with_negative_pnl() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 10000).unwrap();
 
     // LP has negative PNL
@@ -653,7 +666,7 @@ fn test_lp_warmup_with_negative_pnl() {
 #[test]
 fn test_funding_positive_rate_longs_pay_shorts() {
     // T1: Positive funding → longs pay shorts
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -719,7 +732,7 @@ fn test_funding_positive_rate_longs_pay_shorts() {
 #[test]
 fn test_funding_negative_rate_shorts_pay_longs() {
     // T2: Negative funding → shorts pay longs
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -773,7 +786,7 @@ fn test_funding_negative_rate_shorts_pay_longs() {
 #[test]
 fn test_funding_idempotence() {
     // T3: Settlement is idempotent
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(10000).unwrap();
 
     engine.deposit(user_idx, 100_000, 0).unwrap();
@@ -799,7 +812,7 @@ fn test_funding_idempotence() {
 #[test]
 fn test_funding_partial_close() {
     // T4: Partial position close with funding
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -851,7 +864,7 @@ fn test_funding_partial_close() {
 #[test]
 fn test_funding_position_flip() {
     // T5: Flip from long to short
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -907,7 +920,7 @@ fn test_funding_position_flip() {
 #[test]
 fn test_funding_zero_position() {
     // Edge case: funding with zero position should do nothing
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(10000).unwrap();
 
     engine.deposit(user_idx, 100_000, 0).unwrap();
@@ -930,7 +943,7 @@ fn test_funding_zero_position() {
 #[test]
 fn test_funding_does_not_touch_principal() {
     // Funding should never modify principal (Invariant I1 extended)
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     let initial_principal = 100_000;
@@ -965,7 +978,7 @@ fn test_warmup_rate_limit_single_user() {
     params.warmup_period_slots = 100;
     params.max_warmup_rate_fraction_bps = 5000; // 50% in T/2 = 50 slots
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Add insurance fund: 10,000
     set_insurance(&mut engine, 10_000);
@@ -1001,7 +1014,7 @@ fn test_warmup_rate_limit_multiple_users() {
     params.warmup_period_slots = 100;
     params.max_warmup_rate_fraction_bps = 5000; // 50% in T/2
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 10_000);
 
     // Max total warmup rate = 100 per slot
@@ -1036,7 +1049,7 @@ fn test_warmup_rate_released_on_pnl_decrease() {
     params.warmup_period_slots = 100;
     params.max_warmup_rate_fraction_bps = 5000;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 10_000);
 
     let user1 = engine.add_user(100).unwrap();
@@ -1076,7 +1089,7 @@ fn test_warmup_rate_scales_with_insurance_fund() {
     params.warmup_period_slots = 100;
     params.max_warmup_rate_fraction_bps = 5000; // 50% in T/2
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Small insurance fund
     set_insurance(&mut engine, 1_000);
@@ -1110,7 +1123,7 @@ fn test_warmup_rate_limit_invariant_maintained() {
     params.warmup_period_slots = 100;
     params.max_warmup_rate_fraction_bps = 5000;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 10_000);
 
     // Add multiple users with varying PNL
@@ -1172,7 +1185,7 @@ fn test_warmup_rate_limit_invariant_maintained() {
 #[test]
 fn test_lp_withdraw() {
     // Tests that LP withdrawal works correctly (WHITEBOX: direct state mutation)
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -1241,7 +1254,7 @@ fn test_lp_withdraw() {
 #[test]
 fn test_lp_withdraw_with_haircut() {
     // CRITICAL: Tests that LPs are subject to withdrawal-mode haircuts
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -1267,7 +1280,7 @@ fn test_lp_withdraw_with_haircut() {
 #[test]
 fn test_update_lp_warmup_slope() {
     // CRITICAL: Tests that LP warmup actually gets rate limited
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -1304,7 +1317,7 @@ fn test_update_lp_warmup_slope() {
 /// the bounded check will catch it.
 #[test]
 fn test_audit_conservation_detects_excessive_slack() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     engine.deposit(user_idx, 10_000, 0).unwrap();
@@ -1370,7 +1383,7 @@ fn no_ignored_result_patterns_in_engine() {
 /// This test uses only public API methods - no direct state mutation.
 #[test]
 fn api_sequence_conservation_smoke_test() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user = engine.add_user(0).unwrap();
     let lp = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -1414,7 +1427,7 @@ fn test_warmup_slope_nonzero() {
         warmup_period_slots: 1000, // Large period so pnl=1 would normally give slope=0
         ..default_params()
     };
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user = engine.add_user(0).unwrap();
     engine.deposit(user, 10_000, 0).unwrap();
@@ -1453,7 +1466,7 @@ fn test_unwrapped_definition() {
         warmup_period_slots: 100,
         ..default_params()
     };
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user = engine.add_user(0).unwrap();
     engine.deposit(user, 10_000, 0).unwrap();
@@ -1545,7 +1558,7 @@ fn test_unwrapped_definition() {
 /// State after: capital=1_000, pnl=0
 #[test]
 fn test_withdraw_rejected_when_closed_and_negative_pnl() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: position closed but with unrealized losses
@@ -1583,7 +1596,7 @@ fn test_withdraw_rejected_when_closed_and_negative_pnl() {
 /// Test 2: After loss realization, remaining principal can be withdrawn
 #[test]
 fn test_withdraw_allows_remaining_principal_after_loss_realization() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: position closed but with unrealized losses
@@ -1612,7 +1625,7 @@ fn test_withdraw_allows_remaining_principal_after_loss_realization() {
 /// Test: Negative PnL settles immediately, independent of warmup slope
 #[test]
 fn test_negative_pnl_settles_immediately_independent_of_slope() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: loss with zero slope - under old code this would NOT settle
@@ -1645,7 +1658,7 @@ fn test_negative_pnl_settles_immediately_independent_of_slope() {
 /// Test: When loss exceeds capital, capital goes to zero and pnl becomes remaining negative
 #[test]
 fn test_loss_exceeding_capital_leaves_negative_pnl() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: loss greater than capital
@@ -1681,7 +1694,7 @@ fn test_loss_exceeding_capital_leaves_negative_pnl() {
 /// Test 3: Withdraw with open position blocked due to equity
 #[test]
 fn test_withdraw_open_position_blocks_due_to_equity() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: position_size = 1000, entry_price = 1_000_000
@@ -1721,7 +1734,7 @@ fn test_withdraw_open_position_blocks_due_to_equity() {
 /// Test: account_equity correctly computes max(0, capital + pnl)
 #[test]
 fn test_account_equity_computes_correctly() {
-    let engine = RiskEngine::new(default_params());
+    let engine = new_test_engine(default_params());
 
     // Positive equity
     let account_pos = Account {
@@ -1792,7 +1805,7 @@ fn test_account_equity_computes_correctly() {
 /// After loss settlement, can't withdraw the original capital amount
 #[test]
 fn test_withdraw_rejected_when_closed_and_negative_pnl_full_amount() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: deposit 1000, no position, negative pnl of -300
@@ -1814,7 +1827,7 @@ fn test_withdraw_rejected_when_closed_and_negative_pnl_full_amount() {
 /// After loss settlement, can still withdraw what remains
 #[test]
 fn test_withdraw_allows_remaining_principal_after_loss_settlement() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: deposit 1000, no position, negative pnl of -300
@@ -1836,7 +1849,7 @@ fn test_withdraw_allows_remaining_principal_after_loss_settlement() {
 /// When loss exceeds capital, withdrawal is blocked
 #[test]
 fn test_insolvent_account_blocks_any_withdrawal() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: deposit 500, no position, negative pnl of -800 (exceeds capital)
@@ -1858,7 +1871,7 @@ fn test_insolvent_account_blocks_any_withdrawal() {
 /// With position, equity-based margin check blocks undercollateralized withdrawal
 #[test]
 fn test_withdraw_im_check_blocks_when_equity_below_im() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
 
     // Setup: capital = 150, pnl = 0, position = 1000, entry_price = 1_000_000
@@ -1888,7 +1901,7 @@ fn test_withdraw_im_check_blocks_when_equity_below_im() {
 /// Test: keeper_crank returns num_liquidations > 0 when a user is under maintenance
 #[test]
 fn test_keeper_crank_liquidates_undercollateralized_user() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Fund insurance to avoid force-realize mode (threshold=0 means balance=0 triggers it)
     engine.insurance_fund.balance = U128::new(1_000_000);
@@ -1949,7 +1962,7 @@ fn test_keeper_crank_liquidates_undercollateralized_user() {
 /// Setup: small position with no mark pnl (oracle == entry), just barely undercollateralized
 #[test]
 fn test_liquidation_fee_calculation() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Create user
     let user = engine.add_user(0).unwrap();
@@ -2008,7 +2021,7 @@ fn test_dust_killswitch_forces_full_close() {
     params.liquidation_buffer_bps = 100;
     params.min_liquidation_abs = U128::new(5_000_000); // 5 units minimum
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create user with direct setup (matching test_liquidation_fee_calculation pattern)
     let user = engine.add_user(0).unwrap();
@@ -2047,7 +2060,7 @@ fn test_partial_liquidation_brings_to_safety() {
     params.liquidation_buffer_bps = 100;
     params.min_liquidation_abs = U128::new(100_000);
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     let user = engine.add_user(0).unwrap();
 
     // Position: 10 units at $1, small capital
@@ -2091,7 +2104,7 @@ fn test_partial_liquidation_fee_charged() {
     params.min_liquidation_abs = U128::new(100_000);
     params.liquidation_fee_bps = 50; // 0.5%
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     let user = engine.add_user(0).unwrap();
 
     // Small position to trigger full liquidation (dust rule)
@@ -2124,7 +2137,7 @@ fn test_partial_liquidation_fee_charged() {
 #[test]
 fn test_compute_liquidation_close_amount_basic() {
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     let user = engine.add_user(0).unwrap();
 
     // Setup: position = 10 units, capital = 500k
@@ -2160,7 +2173,7 @@ fn test_compute_liquidation_dust_kill() {
     let mut params = default_params();
     params.min_liquidation_abs = U128::new(9_000_000); // 9 units minimum (so after partial, remaining < 9 triggers kill)
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     let user = engine.add_user(0).unwrap();
 
     // Setup: position = 10 units at $1, capital = 500k
@@ -2185,7 +2198,7 @@ fn test_compute_liquidation_dust_kill() {
 #[test]
 fn test_compute_liquidation_zero_equity() {
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     let user = engine.add_user(0).unwrap();
 
     // Setup: position = 10 units at $1, capital = 1M
@@ -2211,7 +2224,7 @@ fn test_compute_liquidation_zero_equity() {
 #[test]
 fn test_set_threshold_updates_value() {
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Initial threshold from params
     assert_eq!(engine.risk_reduction_threshold(), 0);
@@ -2232,7 +2245,7 @@ fn test_set_threshold_updates_value() {
 #[test]
 fn test_set_threshold_large_value() {
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Set to large value
     let large = u128::MAX / 2;
@@ -2251,7 +2264,7 @@ fn test_gc_fee_drained_dust() {
     params.maintenance_fee_per_slot = U128::new(100); // 100 units per slot
     params.max_crank_staleness_slots = u64::MAX; // No staleness check
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create user with small capital
     let user = engine.add_user(0).unwrap();
@@ -2274,7 +2287,7 @@ fn test_gc_fee_drained_dust() {
 fn test_gc_positive_pnl_never_collected() {
     // Test: account with positive PnL is never GC'd
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create user and set up positive PnL with zero capital
     let user = engine.add_user(0).unwrap();
@@ -2299,7 +2312,7 @@ fn test_gc_positive_pnl_never_collected() {
 fn test_gc_negative_pnl_socialized() {
     // Test: account with negative PnL and zero capital is socialized then GC'd
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create user with negative PnL and zero capital
     let user = engine.add_user(0).unwrap();
@@ -2359,7 +2372,7 @@ fn test_gc_negative_pnl_socialized() {
 fn test_gc_with_position_not_collected() {
     // Test: account with open position is never GC'd
     let params = default_params();
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user = engine.add_user(0).unwrap();
     // Add enough capital to avoid liquidation, then set position
@@ -2396,7 +2409,7 @@ fn test_batched_adl_profit_exclusion() {
     params.max_crank_staleness_slots = u64::MAX;
     params.warmup_period_slots = 0; // Instant warmup for this test
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 100_000);
 
     // IMPORTANT: Account creation order matters for per-account processing.
@@ -2512,7 +2525,7 @@ fn test_batched_adl_conservation_basic() {
     params.max_crank_staleness_slots = u64::MAX;
     params.warmup_period_slots = 0;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 100_000);
 
     // Create two users with opposing positions (zero-sum)
@@ -2567,7 +2580,7 @@ fn test_two_phase_liquidation_priority_and_sweep() {
     params.max_crank_staleness_slots = u64::MAX;
     params.warmup_period_slots = 0;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 1_000_000);
 
     // Create several accounts with varying underwater amounts
@@ -2686,7 +2699,7 @@ fn test_window_liquidation_many_accounts_few_liquidatable() {
     params.maintenance_margin_bps = 500; // 5%
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 1_000_000);
 
     // Create accounts with positions - most are healthy, few are underwater
@@ -2764,7 +2777,7 @@ fn test_window_liquidation_many_liquidatable() {
     params.max_crank_staleness_slots = u64::MAX;
     params.warmup_period_slots = 0; // Instant warmup
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     set_insurance(&mut engine, 10_000_000);
 
     // Create 10 underwater accounts with varying severities
@@ -2823,7 +2836,7 @@ fn test_window_liquidation_many_liquidatable() {
 fn test_force_realize_step_closes_in_window_only() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(1000); // Threshold at 1000
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     engine.vault = U128::new(100_000);
 
     // Create counterparty LP
@@ -2892,7 +2905,7 @@ fn test_force_realize_step_closes_in_window_only() {
 fn test_force_realize_step_inert_above_threshold() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(1000); // Threshold at 1000
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     engine.vault = U128::new(100_000);
 
     // Create counterparty LP
@@ -2942,7 +2955,7 @@ fn test_crank_force_closes_dust_positions() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(1000);
     params.min_liquidation_abs = U128::new(100_000); // 100k minimum
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     engine.vault = U128::new(100_000);
 
     // Create counterparty LP
@@ -2994,7 +3007,7 @@ fn test_crank_force_closes_dust_positions() {
 fn test_force_realize_blocks_value_extraction() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(1000);
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     engine.vault = U128::new(100_000);
 
     // Create user with capital
@@ -3023,7 +3036,7 @@ fn test_force_realize_blocks_value_extraction() {
 fn test_pending_finalize_liveness_insurance_covers() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(1000); // Floor at 1000
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Fund insurance well above floor
     engine.insurance_fund.balance = U128::new(100_000);
@@ -3050,7 +3063,7 @@ fn test_pending_finalize_liveness_insurance_covers() {
 fn test_force_realize_updates_lp_aggregates() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(10_000); // High threshold to trigger force-realize
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     engine.vault = U128::new(100_000);
 
     // Insurance below threshold = force-realize active
@@ -3109,7 +3122,7 @@ fn test_withdrawals_blocked_during_pending_unblocked_after() {
     let mut params = default_params();
     params.risk_reduction_threshold = U128::new(0);
     params.warmup_period_slots = 0; // Instant warmup
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Fund insurance
     engine.insurance_fund.balance = U128::new(100_000);
@@ -3165,7 +3178,7 @@ fn test_trade_pnl_is_oracle_minus_exec() {
     params.trading_fee_bps = 0; // No fees for cleaner math
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create LP and user with capital
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
@@ -3220,7 +3233,7 @@ fn test_mark_settlement_on_trade_touch() {
     params.trading_fee_bps = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create LP and user
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
@@ -3301,7 +3314,7 @@ fn test_cross_lp_close_no_pnl_teleport() {
     params.max_crank_staleness_slots = u64::MAX;
     params.max_accounts = 64;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create two LPs with different entry prices (simulated)
     let lp1 = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
@@ -3379,7 +3392,7 @@ fn test_execute_trade_sets_current_slot_and_resets_warmup_start() {
     params.max_crank_staleness_slots = u64::MAX;
     params.max_accounts = 64;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create LP and user with capital
     let lp_idx = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
@@ -3463,7 +3476,7 @@ fn test_execute_trade_rejects_matcher_opposite_sign() {
     params.max_crank_staleness_slots = u64::MAX;
     params.max_accounts = 64;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let lp_idx = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
     engine.deposit(lp_idx, 1_000_000, 0).unwrap();
@@ -3494,7 +3507,7 @@ fn test_execute_trade_rejects_matcher_oversize_fill() {
     params.max_crank_staleness_slots = u64::MAX;
     params.max_accounts = 64;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let lp_idx = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
     engine.deposit(lp_idx, 1_000_000, 0).unwrap();
@@ -3527,7 +3540,7 @@ fn test_check_conservation_fails_on_mark_overflow() {
     let mut params = default_params();
     params.max_accounts = 64;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     // Create user account
     let user_idx = engine.add_user(0).unwrap();
@@ -3578,7 +3591,7 @@ fn params_for_inline_tests() -> RiskParams {
 
 #[test]
 fn test_cross_lp_close_no_pnl_teleport_simple() {
-    let mut engine = RiskEngine::new(params_for_inline_tests());
+    let mut engine = new_test_engine(params_for_inline_tests());
 
     let lp1 = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
     let lp2 = engine.add_lp([3u8; 32], [4u8; 32], 0).unwrap();
@@ -3658,7 +3671,7 @@ fn test_idle_user_drains_and_gc_closes() {
     let mut params = params_for_inline_tests();
     // 1 unit per slot maintenance fee
     params.maintenance_fee_per_slot = U128::new(1);
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     // Deposit 10 units of capital
@@ -3679,7 +3692,7 @@ fn test_idle_user_drains_and_gc_closes() {
 
 #[test]
 fn test_dust_stale_funding_gc() {
-    let mut engine = RiskEngine::new(params_for_inline_tests());
+    let mut engine = new_test_engine(params_for_inline_tests());
 
     let user_idx = engine.add_user(0).unwrap();
 
@@ -3710,7 +3723,7 @@ fn test_dust_stale_funding_gc() {
 
 #[test]
 fn test_dust_negative_fee_credits_gc() {
-    let mut engine = RiskEngine::new(params_for_inline_tests());
+    let mut engine = new_test_engine(params_for_inline_tests());
 
     let user_idx = engine.add_user(0).unwrap();
 
@@ -3737,7 +3750,7 @@ fn test_dust_negative_fee_credits_gc() {
 fn test_lp_never_gc() {
     let mut params = params_for_inline_tests();
     params.maintenance_fee_per_slot = U128::new(1);
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -3764,7 +3777,7 @@ fn test_lp_never_gc() {
 fn test_maintenance_fee_paid_from_fee_credits_is_coupon_not_revenue() {
     let mut params = params_for_inline_tests();
     params.maintenance_fee_per_slot = U128::new(10);
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     engine.deposit(user_idx, 1_000_000, 1).unwrap();
@@ -3805,7 +3818,7 @@ fn test_maintenance_fee_paid_from_fee_credits_is_coupon_not_revenue() {
 fn test_maintenance_fee_splits_credits_coupon_capital_to_insurance() {
     let mut params = params_for_inline_tests();
     params.maintenance_fee_per_slot = U128::new(10);
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     // deposit at slot 1: dt=1 from slot 0, fee=10. Paid from deposit.
@@ -3839,7 +3852,7 @@ fn test_maintenance_fee_splits_credits_coupon_capital_to_insurance() {
 
 #[test]
 fn test_deposit_fee_credits_updates_vault_and_insurance() {
-    let mut engine = RiskEngine::new(params_for_inline_tests());
+    let mut engine = new_test_engine(params_for_inline_tests());
     let user_idx = engine.add_user(0).unwrap();
 
     let vault_before = engine.vault.get();
@@ -3859,7 +3872,7 @@ fn test_warmup_matured_not_lost_on_trade() {
     let mut params = params_for_inline_tests();
     params.warmup_period_slots = 100;
     params.max_crank_staleness_slots = u64::MAX;
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
     let user_idx = engine.add_user(0).unwrap();
@@ -3921,7 +3934,7 @@ fn test_warmup_matured_not_lost_on_trade() {
 fn test_abandoned_with_stale_last_fee_slot_eventually_closed() {
     let mut params = params_for_inline_tests();
     params.maintenance_fee_per_slot = U128::new(1);
-    let mut engine = RiskEngine::new(params);
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     // Small deposit
@@ -3966,7 +3979,7 @@ fn test_finding_l_new_position_requires_initial_margin() {
     params.warmup_period_slots = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
     
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4017,7 +4030,7 @@ fn test_position_flip_margin_check() {
     params.warmup_period_slots = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4078,7 +4091,7 @@ fn test_lp_position_flip_margin_check() {
     params.warmup_period_slots = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4140,7 +4153,7 @@ fn test_micro_trade_fee_not_zero() {
     params.warmup_period_slots = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4182,7 +4195,7 @@ fn test_zero_fee_bps_means_no_fee() {
     params.warmup_period_slots = 0;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4223,7 +4236,7 @@ fn test_warmup_resets_when_mark_increases_pnl() {
     params.initial_margin_bps = 100;
     params.max_crank_staleness_slots = u64::MAX;
 
-    let mut engine = Box::new(RiskEngine::new(params));
+    let mut engine = new_test_engine(params);
 
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
@@ -4303,7 +4316,7 @@ fn test_warmup_resets_when_mark_increases_pnl() {
 /// Spec §4.2 requires all PnL modifications to use set_pnl helper.
 #[test]
 fn test_funding_settlement_maintains_pnl_pos_tot() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     let user_idx = engine.add_user(0).unwrap();
     let lp_idx = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
 
@@ -4388,7 +4401,7 @@ fn test_funding_settlement_maintains_pnl_pos_tot() {
 /// Spec §4.1, §4.2, §4.3 require aggregate maintenance (batch exception documented).
 #[test]
 fn test_trade_aggregate_consistency() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Setup accounts with known initial state
     let user_idx = engine.add_user(0).unwrap();
@@ -4474,7 +4487,7 @@ fn test_trade_aggregate_consistency() {
 /// The bound ensures floor rounding in effective PnL calculation doesn't lose more than K units.
 #[test]
 fn test_rounding_bound_with_many_positive_pnl_accounts() {
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Create multiple accounts with positive PnL
     let num_accounts = 10usize;

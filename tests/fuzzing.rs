@@ -36,6 +36,19 @@
 use colada::*;
 use proptest::prelude::*;
 
+fn new_test_engine(params: RiskParams) -> Box<RiskEngine> {
+    let layout = std::alloc::Layout::new::<RiskEngine>();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut RiskEngine };
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+
+    unsafe {
+        (*ptr).init_in_place(params);
+        Box::from_raw(ptr)
+    }
+}
+
 // ============================================================================
 // CONSTANTS AND MATCHER
 // ============================================================================
@@ -315,7 +328,7 @@ struct FuzzState {
 impl FuzzState {
     fn new(params: RiskParams) -> Self {
         FuzzState {
-            engine: Box::new(RiskEngine::new(params)),
+            engine: new_test_engine(params),
             live_accounts: Vec::new(),
             lp_idx: None,
             account_ids: Vec::new(),
@@ -771,7 +784,7 @@ proptest! {
         slot1 in 0u64..500,
         slot2 in 0u64..500
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].pnl = I128::new(pnl);
@@ -799,7 +812,7 @@ proptest! {
         slope in 0u128..10_000,
         slot in 0u64..500
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].capital = U128::new(principal);
@@ -821,7 +834,7 @@ proptest! {
         pnl in 1i128..100_000,
         slot in 1u64..500
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].pnl = I128::new(pnl);
@@ -841,7 +854,7 @@ proptest! {
         slope in 1u128..1000,
         slot in 1u64..200
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_b()));
+        let mut engine = new_test_engine(params_regime_b());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.insurance_fund.balance = U128::new(100_000);
@@ -876,7 +889,7 @@ proptest! {
         pnl in -50_000i128..50_000,
         funding_delta in -1_000_000i128..1_000_000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].position_size = I128::new(position);
@@ -906,7 +919,7 @@ proptest! {
         price in 100_000u64..10_000_000,
         rate in -1000i64..1000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
 
         let index_before = engine.funding_index_qpb_e6;
         let slot_before = engine.last_funding_slot;
@@ -923,7 +936,7 @@ proptest! {
     fn fuzz_prop_add_fails_at_capacity(num_to_add in 1usize..10) {
         let mut params = params_regime_a();
         params.max_accounts = 4; // Very small
-        let mut engine = Box::new(RiskEngine::new(params));
+        let mut engine = new_test_engine(params);
 
         // Fill up
         for _ in 0..4 {
@@ -943,7 +956,7 @@ proptest! {
         pnl in -100_000i128..100_000,
         funding_delta in -10_000_000i128..10_000_000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].position_size = I128::new(0);
@@ -962,7 +975,7 @@ proptest! {
         position in 1i128..100_000,
         funding_delta in -1_000_000i128..1_000_000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
         let lp_idx = engine.add_lp([0u8; 32], [0u8; 32], 1).unwrap();
 
@@ -1308,7 +1321,7 @@ proptest! {
     // Test that deposit always increases vault and principal
     #[test]
     fn fuzz_deposit_increases_balance(amount in amount_strategy()) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         let vault_before = engine.vault;
@@ -1326,7 +1339,7 @@ proptest! {
         deposit_amount in amount_strategy(),
         withdraw_amount in amount_strategy()
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.deposit(user_idx, deposit_amount, 0).unwrap();
@@ -1353,7 +1366,7 @@ proptest! {
         deposits in prop::collection::vec(amount_strategy(), 1..10),
         withdrawals in prop::collection::vec(amount_strategy(), 1..10)
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         for amount in deposits {
@@ -1375,7 +1388,7 @@ proptest! {
         position in position_strategy(),
         index_delta in -1_000_000i128..1_000_000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].position_size = I128::new(position);
@@ -1397,7 +1410,7 @@ proptest! {
         position in position_strategy(),
         funding_delta in -10_000_000i128..10_000_000
     ) {
-        let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+        let mut engine = new_test_engine(params_regime_a());
         let user_idx = engine.add_user(1).unwrap();
 
         engine.accounts[user_idx as usize].capital = U128::new(principal);
@@ -1421,7 +1434,7 @@ proptest! {
 /// This prevents "docs drift" - ensures engine matches documented formula
 #[test]
 fn conservation_uses_settled_pnl_regression() {
-    let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+    let mut engine = new_test_engine(params_regime_a());
 
     // Create LP and user with positions
     let lp_idx = engine.add_lp([0u8; 32], [0u8; 32], 1).unwrap();
@@ -1501,7 +1514,7 @@ fn conservation_uses_settled_pnl_regression() {
 /// This ensures the fuzz suite accurately models on-chain behavior
 #[test]
 fn harness_rollback_simulation_test() {
-    let mut engine = Box::new(RiskEngine::new(params_regime_a()));
+    let mut engine = new_test_engine(params_regime_a());
 
     // Create user with some capital
     let user_idx = engine.add_user(1).unwrap();

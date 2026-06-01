@@ -3,6 +3,19 @@
 
 use colada::*;
 
+fn new_test_engine(params: RiskParams) -> Box<RiskEngine> {
+    let layout = std::alloc::Layout::new::<RiskEngine>();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut RiskEngine };
+    if ptr.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+
+    unsafe {
+        (*ptr).init_in_place(params);
+        Box::from_raw(ptr)
+    }
+}
+
 fn default_params() -> RiskParams {
     RiskParams {
         warmup_period_slots: 100,
@@ -61,7 +74,7 @@ fn clamp_pos_i128(val: i128) -> u128 {
 fn test_e2e_complete_user_journey() {
     // Scenario: Alice and Bob trade against LP, experience PNL, funding, warmup, withdrawal
 
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Initialize insurance fund
     engine.insurance_fund.balance = U128::new(50_000);
@@ -196,7 +209,7 @@ fn test_e2e_complete_user_journey() {
 fn test_e2e_warmup_rate_limiting_stress() {
     // Scenario: Many users with large PNL, warmup capacity gets constrained
 
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
 
     // Small insurance fund to test capacity limits
     engine.insurance_fund.balance = U128::new(20_000);
@@ -296,7 +309,7 @@ fn test_e2e_warmup_rate_limiting_stress() {
 fn test_e2e_funding_complete_cycle() {
     // Scenario: Users trade, funding accrues over time, positions flip, funding reverses
 
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     engine.insurance_fund.balance = U128::new(50_000);
 
     let lp = engine.add_lp([1u8; 32], [2u8; 32], 10_000).unwrap();
@@ -391,7 +404,7 @@ fn test_e2e_funding_complete_cycle() {
 fn test_e2e_oracle_attack_protection() {
     // Scenario: Attacker tries to exploit oracle manipulation but gets limited by warmup + ADL
 
-    let mut engine = Box::new(RiskEngine::new(default_params()));
+    let mut engine = new_test_engine(default_params());
     engine.insurance_fund.balance = U128::new(30_000);
 
     let lp = engine.add_lp([1u8; 32], [2u8; 32], 10_000).unwrap();
