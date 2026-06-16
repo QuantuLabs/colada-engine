@@ -1,0 +1,1 @@
+pub const MAX_POSITION_NOTIONAL_QUOTE_E6: u64 = 1 << 44;

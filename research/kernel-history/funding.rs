@@ -52,7 +52,7 @@ pub fn div_i128_trunc_toward_zero(
 
 #[inline(always)]
 pub fn price_pnl_for_quote_notional(
-    position_size: i32,
+    position_size: i64,
     close_abs_size: u64,
     entry_price: u64,
     execution_price: u64,
