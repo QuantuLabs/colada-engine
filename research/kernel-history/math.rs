@@ -42,12 +42,11 @@ impl U256 {
         Self([value, 0, 0, 0])
     }
 
-    const fn from_u128(value: u128) -> Self {
+    pub(super) const fn from_u128(value: u128) -> Self {
         Self([value as u64, (value >> 64) as u64, 0, 0])
     }
 
-    #[cfg(test)]
-    const fn from_limbs_le(value: [u64; 4]) -> Self {
+    pub(super) const fn from_limbs_le(value: [u64; 4]) -> Self {
         Self(value)
     }
 
@@ -61,7 +60,7 @@ impl U256 {
         Ordering::Equal
     }
 
-    fn checked_add(self, rhs: Self) -> Result<Self, MathError> {
+    pub(super) fn checked_add(self, rhs: Self) -> Result<Self, MathError> {
         let mut out = [0_u64; 4];
         let mut carry = 0_u128;
         for (index, slot) in out.iter_mut().enumerate() {
@@ -95,7 +94,7 @@ impl U256 {
         Ok(Self(out))
     }
 
-    fn checked_mul_u64(self, rhs: u64) -> Result<Self, MathError> {
+    pub(super) fn checked_mul_u64(self, rhs: u64) -> Result<Self, MathError> {
         let mut out = [0_u64; 4];
         let mut carry = 0_u128;
         for (index, slot) in out.iter_mut().enumerate() {
@@ -155,7 +154,7 @@ impl U256 {
         Ok((quotient, remainder))
     }
 
-    fn div_ceil_bounded(self, denominator: Self) -> Result<Self, MathError> {
+    pub(super) fn div_ceil_bounded(self, denominator: Self) -> Result<Self, MathError> {
         let (quotient, remainder) = self.div_rem_bounded(denominator)?;
         if remainder == Self::ZERO {
             Ok(quotient)
@@ -164,7 +163,7 @@ impl U256 {
         }
     }
 
-    fn try_u64(self) -> Result<u64, MathError> {
+    pub(super) fn try_u64(self) -> Result<u64, MathError> {
         if self.0[1] != 0 || self.0[2] != 0 || self.0[3] != 0 {
             return Err(MathError::InvalidNarrowing);
         }
