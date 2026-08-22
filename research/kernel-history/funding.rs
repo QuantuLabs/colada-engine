@@ -76,11 +76,105 @@ pub fn price_pnl_for_quote_notional(
 }
 
 #[inline(always)]
-fn funding_rate_q64_64_from_premium_q32(premium_q32: i64) -> Result<i128, ProgramError> {
-    i128::from(premium_q32)
+pub(crate) fn funding_rate_q64_64_from_premium_q32(
+    premium_q32: i64,
+) -> Result<i128, ProgramError> {
+    i128::from(clamp_funding_premium_q32(premium_q32))
         .checked_shl(32)
         .ok_or(ProgramError::from(ColadaError::Overflow))?
         .checked_div(8)
         .ok_or(ProgramError::from(ColadaError::Overflow))
         .map(|rate| rate.clamp(-FUNDING_RATE_CAP_Q64_64, FUNDING_RATE_CAP_Q64_64))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FundingIndexStepV1 {
+    pub(crate) cumulative_funding_index_q64_64: i128,
+    pub(crate) funding_rate_q64_64_per_9000_slots: i128,
+    pub(crate) funding_index_pre_division_remainder: i128,
+    pub(crate) last_funding_accrual_slot: u64,
+    pub(crate) changed: bool,
+}
+
+#[inline(always)]
+pub(crate) fn funding_index_step_q64_64(
+    cumulative_funding_index_q64_64: i128,
+    funding_index_pre_division_remainder: i128,
+    last_funding_accrual_slot: u64,
+    accrued_slots: u64,
+    funding_rate_q64_64_per_9000_slots: i128,
+) -> Result<FundingIndexStepV1, ProgramError> {
+    if accrued_slots == 0 {
+        return Ok(FundingIndexStepV1 {
+            cumulative_funding_index_q64_64,
+            funding_rate_q64_64_per_9000_slots,
+            funding_index_pre_division_remainder,
+            last_funding_accrual_slot,
+            changed: false,
+        });
+    }
+    let funding_index_numerator = funding_rate_q64_64_per_9000_slots
+        .checked_mul(i128::from(accrued_slots))
+        .ok_or(ProgramError::from(ColadaError::Overflow))?
+        .checked_add(funding_index_pre_division_remainder)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let funding_index_delta =
+        div_i128_trunc_toward_zero(funding_index_numerator, i128::from(FUNDING_RATE_UNIT_SLOTS))?;
+    let funding_index_remainder = funding_index_numerator
+        .checked_sub(
+            funding_index_delta
+                .checked_mul(i128::from(FUNDING_RATE_UNIT_SLOTS))
+                .ok_or(ProgramError::from(ColadaError::Overflow))?,
+        )
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let cumulative_index = cumulative_funding_index_q64_64
+        .checked_add(funding_index_delta)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let last_funding_accrual_slot = last_funding_accrual_slot
+        .checked_add(accrued_slots)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    Ok(FundingIndexStepV1 {
+        cumulative_funding_index_q64_64: cumulative_index,
+        funding_rate_q64_64_per_9000_slots,
+        funding_index_pre_division_remainder: funding_index_remainder,
+        last_funding_accrual_slot,
+        changed: true,
+    })
+}
+
+#[inline(always)]
+pub(crate) fn funding_pnl_for_signed_size_values(
+    signed_size: i64,
+    entry_funding_index_q64_64: i128,
+    current_funding_index_q64_64: i128,
+    carried_remainder_quote_q64_64: u64,
+) -> Result<(i64, u64), ProgramError> {
+    if signed_size == 0 {
+        return Ok((0, carried_remainder_quote_q64_64));
+    }
+    let index_delta = current_funding_index_q64_64
+        .checked_sub(entry_funding_index_q64_64)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let funding_pnl_numerator = i128::from(signed_size)
+        .checked_mul(index_delta)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?
+        .checked_neg()
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let carried_numerator = funding_pnl_numerator
+        .checked_add(i128::from(carried_remainder_quote_q64_64))
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let funding_pnl = div_i128_floor(carried_numerator, Q64_ONE_I128)?;
+    if funding_pnl > i64::MAX as i128 || funding_pnl < i64::MIN as i128 {
+        return Err(ColadaError::Overflow.into());
+    }
+    let realized_atoms_q64 = funding_pnl
+        .checked_mul(Q64_ONE_I128)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    let remainder = carried_numerator
+        .checked_sub(realized_atoms_q64)
+        .ok_or(ProgramError::from(ColadaError::Overflow))?;
+    if remainder < 0 || remainder > u64::MAX as i128 {
+        return Err(ColadaError::Overflow.into());
+    }
+    Ok((funding_pnl as i64, remainder as u64))
 }
