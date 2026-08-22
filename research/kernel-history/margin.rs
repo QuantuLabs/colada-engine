@@ -58,3 +58,19 @@ fn is_margin_pair_admissible(
         && initial_margin_bps == TIER1_INITIAL_MARGIN_BPS
         && maintenance_margin_bps == TIER1_MAINTENANCE_MARGIN_BPS
 }
+
+#[inline(always)]
+fn margin_pair_admissible(
+    initial_margin_bps: u16,
+    maintenance_margin_bps: u16,
+    max_staleness_secs: i64,
+    max_confidence_bps: u16,
+) -> bool {
+    (initial_margin_bps == 500 && maintenance_margin_bps == 250)
+        || (initial_margin_bps == 200
+            && maintenance_margin_bps == 100
+            && max_staleness_secs > 0
+            && max_staleness_secs <= 2
+            && max_confidence_bps > 0
+            && max_confidence_bps <= 100)
+}
