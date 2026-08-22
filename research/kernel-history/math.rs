@@ -163,7 +163,7 @@ impl U256 {
         }
     }
 
-    pub(super) fn try_u64(self) -> Result<u64, MathError> {
+    pub(crate) fn try_u64(self) -> Result<u64, MathError> {
         if self.0[1] != 0 || self.0[2] != 0 || self.0[3] != 0 {
             return Err(MathError::InvalidNarrowing);
         }
@@ -181,7 +181,7 @@ pub(crate) struct PriceBoundsQ64 {
 pub(crate) struct AuthenticatedQuoteCap(QuoteE6);
 
 impl AuthenticatedQuoteCap {
-    pub(super) const fn from_authenticated_parent(value: QuoteE6) -> Self {
+    pub(crate) const fn from_authenticated_parent(value: QuoteE6) -> Self {
         Self(value)
     }
 }
