@@ -269,12 +269,13 @@ fn atom_ratio_wide(
     if price_q64 == 0 {
         return Err(MathError::ZeroPrice);
     }
-    let factor = U256::from_u64(scale).checked_shl_64()?;
-    let q_max = U256::MAX.div_rem_bounded(factor)?.0;
-    if quote_e6_wide.compare(q_max) == Ordering::Greater {
-        return Err(MathError::OutOfEnvelope);
-    }
-    let numerator = quote_e6_wide.checked_mul_u64(scale)?.checked_shl_64()?;
+    let numerator = quote_e6_wide
+        .checked_mul_u64(scale)
+        .and_then(U256::checked_shl_64)
+        .map_err(|error| match error {
+            MathError::U256Overflow => MathError::OutOfEnvelope,
+            other => other,
+        })?;
     let denominator = U256::from_u128(price_q64).checked_mul_u64(QUOTE_E6_SCALE)?;
     Ok((numerator, denominator))
 }
