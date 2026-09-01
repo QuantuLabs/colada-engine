@@ -171,6 +171,84 @@ impl U256 {
     }
 }
 
+pub(crate) fn mul_q64_floor(left: u128, right: u128) -> Result<u128, MathError> {
+    if left == 0 || right == 0 {
+        return Err(MathError::ZeroPrice);
+    }
+    let product = U256::from_u128(left).checked_mul_u128(right)?;
+    let value = product.div_rem_bounded(U256::from_u128(Q64_ONE))?.0;
+    if value.0[2] != 0 || value.0[3] != 0 {
+        return Err(MathError::InvalidNarrowing);
+    }
+    Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
+}
+
+pub(crate) fn mul_q64_ceil(left: u128, right: u128) -> Result<u128, MathError> {
+    if left == 0 || right == 0 {
+        return Err(MathError::ZeroPrice);
+    }
+    let product = U256::from_u128(left).checked_mul_u128(right)?;
+    let value = product.div_ceil_bounded(U256::from_u128(Q64_ONE))?;
+    if value.0[2] != 0 || value.0[3] != 0 {
+        return Err(MathError::InvalidNarrowing);
+    }
+    Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
+}
+
+pub(crate) fn compose_confidence_bps(
+    point: u128,
+    lower: u128,
+    upper: u128,
+) -> Result<u16, MathError> {
+    if point == 0 || lower == 0 || lower > point || point > upper {
+        return Err(MathError::InvertedPriceBounds);
+    }
+    let deviation = point
+        .checked_sub(lower)
+        .ok_or(MathError::U256Underflow)?
+        .max(upper.checked_sub(point).ok_or(MathError::U256Underflow)?);
+    let bps = U256::from_u128(deviation)
+        .checked_mul_u64(BPS_DENOMINATOR)?
+        .div_ceil_bounded(U256::from_u128(point))?
+        .try_u64()?;
+    u16::try_from(bps).map_err(|_| MathError::OutOfEnvelope)
+}
+
+pub(crate) fn compose_dispersion_bps(left: u16, right: u16) -> Result<u16, MathError> {
+    let cross = u64::from(left)
+        .checked_mul(u64::from(right))
+        .ok_or(MathError::U256Overflow)?
+        .checked_add(BPS_DENOMINATOR - 1)
+        .ok_or(MathError::U256Overflow)?
+        / BPS_DENOMINATOR;
+    let value = u64::from(left)
+        .checked_add(u64::from(right))
+        .and_then(|v| v.checked_add(cross))
+        .ok_or(MathError::U256Overflow)?;
+    if value > BPS_DENOMINATOR {
+        return Err(MathError::OutOfEnvelope);
+    }
+    Ok(value as u16)
+}
+
+pub(crate) fn normalize_sol_atom_cap_quote_e6(
+    cap_sol_atoms: u128,
+    sol_quote_lower_q64: u128,
+) -> Result<u128, MathError> {
+    if cap_sol_atoms == 0 || sol_quote_lower_q64 == 0 {
+        return Err(MathError::ZeroPrice);
+    }
+    let numerator = U256::from_u128(cap_sol_atoms)
+        .checked_mul_u128(sol_quote_lower_q64)?
+        .checked_mul_u64(QUOTE_E6_SCALE)?;
+    let denominator = U256::from_u64(1_000_000_000).checked_shl_64()?;
+    let value = numerator.div_rem_bounded(denominator)?.0;
+    if value.0[2] != 0 || value.0[3] != 0 {
+        return Err(MathError::InvalidNarrowing);
+    }
+    Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PriceBoundsQ64 {
     p_lo: PriceQ64,
