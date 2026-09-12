@@ -129,9 +129,29 @@ impl U256 {
         if denominator == Self::ZERO {
             return Err(MathError::ZeroDenominator);
         }
+        if self.0[2] == 0
+            && self.0[3] == 0
+            && denominator.0[2] == 0
+            && denominator.0[3] == 0
+        {
+            let numerator = u128::from(self.0[0]) | (u128::from(self.0[1]) << 64);
+            let denominator =
+                u128::from(denominator.0[0]) | (u128::from(denominator.0[1]) << 64);
+            return Ok((
+                Self::from_u128(numerator / denominator),
+                Self::from_u128(numerator % denominator),
+            ));
+        }
         let mut quotient = Self::ZERO;
         let mut remainder = Self::ZERO;
-        for bit in (0..256).rev() {
+        let significant_bits = self
+            .0
+            .iter()
+            .rposition(|limb| *limb != 0)
+            .map_or(0, |index| {
+                index * 64 + (64 - self.0[index].leading_zeros() as usize)
+            });
+        for bit in (0..significant_bits).rev() {
             if remainder.0[3] >> 63 != 0 {
                 return Err(MathError::U256Overflow);
             }
@@ -505,6 +525,197 @@ mod tests {
         "../../../../../tests/fixtures/permissionless-collateral-s00p/conversion-kernel-r2.json"
     );
     const FIXTURE_SHA256: &str = "ccd8b29d553e17cc35449a811efc201004b25b612868d7d6929def0a3112cd43";
+
+    #[test]
+    fn significant_bit_division_boundaries_preserve_floor_remainder_and_ceil() {
+        let cases = [
+            (
+                "zero numerator",
+                U256::ZERO,
+                U256::from_u64(7),
+                Ok((U256::ZERO, U256::ZERO, U256::ZERO)),
+            ),
+            (
+                "zero over zero",
+                U256::ZERO,
+                U256::ZERO,
+                Err(MathError::ZeroDenominator),
+            ),
+            (
+                "nonzero over zero",
+                U256::ONE,
+                U256::ZERO,
+                Err(MathError::ZeroDenominator),
+            ),
+            (
+                "numerator below denominator",
+                U256::from_u64(5),
+                U256::from_u64(7),
+                Ok((U256::ZERO, U256::from_u64(5), U256::ONE)),
+            ),
+            (
+                "exact division",
+                U256::from_u64(10),
+                U256::from_u64(5),
+                Ok((U256::from_u64(2), U256::ZERO, U256::from_u64(2))),
+            ),
+            (
+                "remainder division",
+                U256::from_u64(10),
+                U256::from_u64(3),
+                Ok((U256::from_u64(3), U256::ONE, U256::from_u64(4))),
+            ),
+            (
+                "u128 max over two",
+                U256::from_u128(u128::MAX),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_u128(u128::MAX / 2),
+                    U256::ONE,
+                    U256::from_u128(u128::MAX / 2 + 1),
+                )),
+            ),
+            (
+                "u128 max over u128 max",
+                U256::from_u128(u128::MAX),
+                U256::from_u128(u128::MAX),
+                Ok((U256::ONE, U256::ZERO, U256::ONE)),
+            ),
+            (
+                "wide numerator",
+                U256::from_limbs_le([0, 0, 1, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_u128(1_u128 << 127),
+                    U256::ZERO,
+                    U256::from_u128(1_u128 << 127),
+                )),
+            ),
+            (
+                "wide denominator",
+                U256::from_u128(u128::MAX),
+                U256::from_limbs_le([0, 0, 1, 0]),
+                Ok((U256::ZERO, U256::from_u128(u128::MAX), U256::ONE)),
+            ),
+            (
+                "wide numerator and denominator",
+                U256::from_limbs_le([1, 0, 1, 0]),
+                U256::from_limbs_le([0, 0, 1, 0]),
+                Ok((U256::ONE, U256::ONE, U256::from_u64(2))),
+            ),
+            (
+                "63 bits",
+                U256::from_limbs_le([1_u64 << 62, 0, 0, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([1_u64 << 61, 0, 0, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([1_u64 << 61, 0, 0, 0]),
+                )),
+            ),
+            (
+                "64 bits",
+                U256::from_limbs_le([1_u64 << 63, 0, 0, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([1_u64 << 62, 0, 0, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([1_u64 << 62, 0, 0, 0]),
+                )),
+            ),
+            (
+                "127 bits",
+                U256::from_limbs_le([0, 1_u64 << 62, 0, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 1_u64 << 61, 0, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 1_u64 << 61, 0, 0]),
+                )),
+            ),
+            (
+                "128 bits",
+                U256::from_limbs_le([0, 1_u64 << 63, 0, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 1_u64 << 62, 0, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 1_u64 << 62, 0, 0]),
+                )),
+            ),
+            (
+                "191 bits",
+                U256::from_limbs_le([0, 0, 1_u64 << 62, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 0, 1_u64 << 61, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 0, 1_u64 << 61, 0]),
+                )),
+            ),
+            (
+                "192 bits",
+                U256::from_limbs_le([0, 0, 1_u64 << 63, 0]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 0, 1_u64 << 62, 0]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 0, 1_u64 << 62, 0]),
+                )),
+            ),
+            (
+                "255 bits",
+                U256::from_limbs_le([0, 0, 0, 1_u64 << 62]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 0, 0, 1_u64 << 61]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 0, 0, 1_u64 << 61]),
+                )),
+            ),
+            (
+                "top limb",
+                U256::from_limbs_le([0, 0, 0, u64::MAX]),
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([0, 0, 1_u64 << 63, u64::MAX >> 1]),
+                    U256::ZERO,
+                    U256::from_limbs_le([0, 0, 1_u64 << 63, u64::MAX >> 1]),
+                )),
+            ),
+            (
+                "full U256",
+                U256::MAX,
+                U256::from_u64(2),
+                Ok((
+                    U256::from_limbs_le([u64::MAX, u64::MAX, u64::MAX, u64::MAX >> 1]),
+                    U256::ONE,
+                    U256::from_limbs_le([0, 0, 0, 1_u64 << 63]),
+                )),
+            ),
+        ];
+
+        for (name, numerator, denominator, expected) in cases {
+            match expected {
+                Ok((floor, remainder, ceil)) => {
+                    assert_eq!(
+                        numerator.div_rem_bounded(denominator),
+                        Ok((floor, remainder)),
+                        "{name}"
+                    );
+                    assert_eq!(numerator.div_ceil_bounded(denominator), Ok(ceil), "{name}");
+                }
+                Err(error) => {
+                    assert_eq!(numerator.div_rem_bounded(denominator), Err(error), "{name}");
+                    assert_eq!(
+                        numerator.div_ceil_bounded(denominator),
+                        Err(error),
+                        "{name}"
+                    );
+                }
+            }
+        }
+    }
 
     #[derive(Debug)]
     enum Json<'a> {
