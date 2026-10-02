@@ -70,16 +70,15 @@ pub fn meet(a:Support,b:Support)->Support {
 /// Common support of priced legs; with any sampled leg, every leg must be supported and all must share >=120 s.
 #[inline(never)]
 pub fn overlap(legs:&[(Support,bool)])->Result<Support,ProgramError> {
-    let mut real=[(None,false);2];let mut n=0;
-    for leg in legs.iter().filter(|(support,_)|*support!=POINT) {*real.get_mut(n).ok_or_else(bad)?=*leg;n+=1;}
+    let real=||legs.iter().filter(|(support,_)|*support!=POINT);
+    let n=real().count();
     if n==0 && !legs.is_empty() {return Ok(POINT);}
-    let legs=&real[..n];
-    let sampled=legs.len()>1 && legs.iter().any(|(_,sampled)|*sampled);
-    if legs.iter().any(|(support,_)|support.is_none()) {
+    let sampled=(n>1 || n<legs.len()) && real().any(|(_,sampled)|*sampled);
+    if real().any(|(support,_)|support.is_none()) {
         if sampled {return Err(bad());}
         return Ok(None);
     }
-    let common=legs.iter().fold(None,|acc,(support,_)|meet(acc,*support));
+    let common=real().fold(None,|acc,(support,_)|meet(acc,*support));
     if sampled && common.is_none_or(|(start,end)|end.checked_sub(start).is_none_or(|span|span<120)) {return Err(bad());}
     Ok(common)
 }
