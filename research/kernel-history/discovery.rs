@@ -67,12 +67,16 @@ pub fn meet(a:Support,b:Support)->Support {
     match (a,b) {(Some((s0,e0)),Some((s1,e1)))=>Some((s0.max(s1),e0.min(e1))),(a,None)=>a,(None,b)=>b}
 }
 
-/// Common support of priced legs; with any sampled leg, every two supported legs must share >=120 s.
+/// Common support of priced legs; with any sampled leg, every leg must be supported and all must share >=120 s.
 #[inline(never)]
 pub fn overlap(legs:&[(Support,bool)])->Result<Support,ProgramError> {
+    let sampled=legs.len()>1 && legs.iter().any(|(_,sampled)|*sampled);
+    if legs.iter().any(|(support,_)|support.is_none()) {
+        if sampled {return Err(bad());}
+        return Ok(None);
+    }
     let common=legs.iter().fold(None,|acc,(support,_)|meet(acc,*support));
-    if legs.iter().any(|(_,sampled)|*sampled) && legs.iter().filter(|(support,_)|support.is_some()).count()>1
-        && common.is_none_or(|(start,end)|end.checked_sub(start).is_none_or(|span|span<120)) {return Err(bad());}
+    if sampled && common.is_none_or(|(start,end)|end.checked_sub(start).is_none_or(|span|span<120)) {return Err(bad());}
     Ok(common)
 }
 
