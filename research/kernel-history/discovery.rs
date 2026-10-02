@@ -70,6 +70,10 @@ pub fn meet(a:Support,b:Support)->Support {
 /// Common support of priced legs; with any sampled leg, every leg must be supported and all must share >=120 s.
 #[inline(never)]
 pub fn overlap(legs:&[(Support,bool)])->Result<Support,ProgramError> {
+    let mut real=[(None,false);2];let mut n=0;
+    for leg in legs.iter().filter(|(support,_)|*support!=POINT) {*real.get_mut(n).ok_or_else(bad)?=*leg;n+=1;}
+    if n==0 && !legs.is_empty() {return Ok(POINT);}
+    let legs=&real[..n];
     let sampled=legs.len()>1 && legs.iter().any(|(_,sampled)|*sampled);
     if legs.iter().any(|(support,_)|support.is_none()) {
         if sampled {return Err(bad());}
@@ -83,3 +87,6 @@ pub fn overlap(legs:&[(Support,bool)])->Result<Support,ProgramError> {
 pub fn span(start:i64,end:i64)->Result<(u32,u32),ProgramError> {
     Ok((u32::try_from(start).map_err(|_|bad())?,u32::try_from(end).map_err(|_|bad())?))
 }
+
+/// Type tag of a current-point leg: it earns no interval, `overlap` excludes it and any `meet` with it is empty.
+pub const POINT:Support=Some((u32::MAX,u32::MAX));
