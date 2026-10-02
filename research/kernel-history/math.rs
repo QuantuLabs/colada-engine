@@ -512,6 +512,46 @@ pub(crate) fn identity_price_bounds_by_address_equality(
     })
 }
 
+const FUNDED_MAX_ENTRY: u64 = 1 << 44;
+
+fn funded_signed_floor(negative: bool, quotient: u128, remainder: bool) -> i128 {
+    if negative {
+        -((quotient + u128::from(remainder)) as i128)
+    } else {
+        quotient as i128
+    }
+}
+
+pub(crate) fn funded_net_and_capped(
+    size: i64,
+    entry: u64,
+    exit: u64,
+    checkpoint: i128,
+    current: i128,
+    allocated_quote_e6: u64,
+) -> Result<(i128, i128), MathError> {
+    let n = size.unsigned_abs();
+    if n == 0 || n > FUNDED_MAX_ENTRY || entry == 0 || exit == 0 {
+        return Err(MathError::OutOfEnvelope);
+    }
+    let price_mag = u128::from(n) * u128::from(exit.abs_diff(entry));
+    let price = funded_signed_floor(
+        (size < 0) != (exit < entry),
+        price_mag / u128::from(entry),
+        price_mag % u128::from(entry) != 0,
+    );
+    let delta = current.abs_diff(checkpoint);
+    let low = u128::from(n) * u128::from(delta as u64);
+    let funding_q = u128::from(n) * (delta >> 64) + (low >> 64);
+    let funding = funded_signed_floor(
+        (size > 0) == (current >= checkpoint),
+        funding_q,
+        low as u64 != 0,
+    );
+    let raw = price + funding;
+    Ok((raw, raw.clamp(-i128::from(allocated_quote_e6), i128::from(n))))
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -1531,5 +1571,36 @@ mod tests {
         for (error, code) in mappings {
             assert_eq!(ProgramError::from(error), ProgramError::Custom(code));
         }
+    }
+
+    #[test]
+    fn d2_funded_net_matches_n613_reference_vectors() {
+        const CASES: [(i64, u64, u64, i128, i128, u64, i128, i128); 14] = [
+            (250000000, 1000, 35925, 0, 0, 100000000, 8731250000, 250000000),
+            (-250000000, 1000, 35925, 0, 0, 100000000, -8731250000, -100000000),
+            (-250000000, 1000000000, 1, 0, 0, 100000000, 249999999, 249999999),
+            (250000000, 1000, 1000, 0, -36893488147419103232, 100000000, 500000000, 250000000),
+            (250000000, 1, 4294967296, 0, 79228162495817593519834398720, 100000000, 0, 0),
+            (1, 3, 2, 0, 0, 1, -1, -1),
+            (1, 3, 4, 0, 0, 1, 0, 0),
+            (1, 1, 1, 0, 1, 1, -1, -1),
+            (1, 1, 1, 0, -1, 1, 0, 0),
+            (17592186044416, 1, u64::MAX, 0, 0, u64::MAX, 324518553658426726747971648487424, 17592186044416),
+            (-17592186044416, 1, 1, i128::MIN, i128::MAX, u64::MAX, 324518553658426726783156020576255, 17592186044416),
+            (17592186044416, 1, 1, i128::MIN, i128::MAX, u64::MAX, -324518553658426726783156020576256, -18446744073709551615),
+            (17592186044416, 1, u64::MAX, 0, i128::MAX, u64::MAX, 162259276829213363356393638199296, 17592186044416),
+            (-250000000, 1, u64::MAX, 0, 0, 0, -4611686018427387903500000000, 0),
+        ];
+        for (size, entry, exit, checkpoint, current, allocated, raw, capped) in CASES {
+            assert_eq!(
+                funded_net_and_capped(size, entry, exit, checkpoint, current, allocated),
+                Ok((raw, capped)),
+                "{size} {entry} {exit} {checkpoint} {current} {allocated}"
+            );
+        }
+        assert!(funded_net_and_capped(0, 1, 1, 0, 0, 1).is_err());
+        assert!(funded_net_and_capped(1 << 44 | 1, 1, 1, 0, 0, 1).is_err());
+        assert!(funded_net_and_capped(1, 0, 1, 0, 0, 1).is_err());
+        assert!(funded_net_and_capped(1, 1, 0, 0, 0, 1).is_err());
     }
 }
