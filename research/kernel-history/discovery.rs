@@ -60,3 +60,17 @@ pub fn sampled_floor_usdc(floor:u128,lower_x64:u128,quote_decimals:u8)->Result<u
     if wide[3]!=0 || wide[4]!=0 {return Err(bad());}
     Ok(u128::from(wide[1])|(u128::from(wide[2])<<64))
 }
+
+pub type Support=Option<(i64,i64)>;
+
+pub fn meet(a:Support,b:Support)->Support {
+    match (a,b) {(Some((s0,e0)),Some((s1,e1)))=>Some((s0.max(s1),e0.min(e1))),(a,None)=>a,(None,b)=>b}
+}
+
+/// Common support of priced legs; with any sampled leg, every two supported legs must share >=120 s.
+pub fn overlap(legs:&[(Support,bool)])->Result<Support,ProgramError> {
+    let common=legs.iter().fold(None,|acc,(support,_)|meet(acc,*support));
+    if legs.iter().any(|(_,sampled)|*sampled) && legs.iter().filter(|(support,_)|support.is_some()).count()>1
+        && common.is_none_or(|(start,end)|end.checked_sub(start).is_none_or(|span|span<120)) {return Err(bad());}
+    Ok(common)
+}
