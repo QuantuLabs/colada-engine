@@ -529,6 +529,7 @@ pub(crate) fn funded_net_and_capped(
     checkpoint: i128,
     current: i128,
     allocated_quote_e6: u64,
+    credit_funding: bool,
 ) -> Result<(i128, i128), MathError> {
     let n = size.unsigned_abs();
     if n == 0 || n > FUNDED_MAX_ENTRY || entry == 0 || exit == 0 {
@@ -548,8 +549,108 @@ pub(crate) fn funded_net_and_capped(
         funding_q,
         low as u64 != 0,
     );
-    let raw = price + funding;
+    let raw = price + if credit_funding { funding } else { funding.min(0) };
     Ok((raw, raw.clamp(-i128::from(allocated_quote_e6), i128::from(n))))
+}
+
+pub(crate) const SECURE_RATE_BPS_PER_HOUR: u128 = 200;
+pub(crate) const SECURE_STEP_CAP_BPS: u128 = 100;
+pub(crate) const SECURE_SLOT_MS: u128 = 400;
+pub(crate) const SECURE_BREAKER_BPS: u128 = 500;
+pub(crate) const SECURE_BREAKER_BOTH_SIDES: bool = true;
+pub(crate) const SECURE_IM_FLOOR_BPS: u16 = 5_000;
+const HOUR_MS: u128 = 3_600_000;
+pub(crate) const SECURE_ONE_Q32: u128 = 1 << 32;
+pub(crate) const SECURE_P_MAX_Q32: u128 = (u64::MAX as u128) << 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SecureStepMode {
+    Fresh,
+    Open,
+    Frozen,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SecureReferenceVNext {
+    pub lifted: bool,
+    pub ref_q32: u128,
+    pub slot: u64,
+    pub unix: i64,
+}
+
+pub(crate) fn secure_reference_step(
+    r: SecureReferenceVNext,
+    p: u64,
+    slot: u64,
+    unix: i64,
+    mode: SecureStepMode,
+) -> SecureReferenceVNext {
+    secure_reference_step_at(SECURE_RATE_BPS_PER_HOUR, r, p, slot, unix, mode)
+}
+
+fn secure_reference_step_at(
+    rate_bps_per_hour: u128,
+    r: SecureReferenceVNext,
+    p: u64,
+    slot: u64,
+    unix: i64,
+    mode: SecureStepMode,
+) -> SecureReferenceVNext {
+    if mode == SecureStepMode::Frozen {
+        return r;
+    }
+    let du = u128::from(unix.saturating_sub(r.unix).max(0) as u64) * 1000;
+    let ds = u128::from(slot.saturating_sub(r.slot)) * SECURE_SLOT_MS;
+    let num = (rate_bps_per_hour * du.min(ds)).min(SECURE_STEP_CAP_BPS * HOUR_MS);
+    let delta = r.ref_q32 * num / (10_000 * HOUR_MS);
+    let (lo, hi) = (r.ref_q32 - delta, (r.ref_q32 + delta).min(SECURE_P_MAX_Q32));
+    let pq = u128::from(p) << 32;
+    let at = |ref_q32| SecureReferenceVNext {
+        ref_q32,
+        slot: r.slot.max(slot),
+        unix: r.unix.max(unix),
+        ..r
+    };
+    if (lo..=hi).contains(&pq) {
+        return at(pq);
+    }
+    if delta == 0 && mode == SecureStepMode::Fresh {
+        return r;
+    }
+    at(pq.clamp(lo, hi))
+}
+
+pub(crate) fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
+    let pq = u128::from(p) << 32;
+    let s = U256::from_u128(if buy { pq.max(ref_q32) } else { pq.min(ref_q32) });
+    let (pd, one) = (U256::from_u64(p.max(1)), U256::from_u128(SECURE_ONE_Q32));
+    let Ok(prod) = s.checked_mul_u64(x) else {
+        return if buy { u64::MAX } else { 1 };
+    };
+    if buy {
+        let q = prod.div_ceil_bounded(pd).unwrap_or(U256::MAX);
+        let xq = if q.compare(s) == Ordering::Greater { q } else { s };
+        xq.div_ceil_bounded(one)
+            .and_then(U256::try_u64)
+            .unwrap_or(u64::MAX)
+    } else {
+        let q = prod.div_rem_bounded(pd).map_or(s, |(q, _)| q);
+        let xq = if q.compare(s) == Ordering::Less { q } else { s };
+        xq.div_rem_bounded(one)
+            .map_or(Ok(1), |(q, _)| q.try_u64())
+            .unwrap_or(u64::MAX)
+            .max(1)
+    }
+}
+
+pub(crate) fn secure_breaker_allows_open(p: u64, ref_q32: u128, buy: bool) -> bool {
+    secure_breaker_allows_open_sides(p, ref_q32, buy, SECURE_BREAKER_BOTH_SIDES)
+}
+
+fn secure_breaker_allows_open_sides(p: u64, ref_q32: u128, buy: bool, both_sides: bool) -> bool {
+    let pq = u128::from(p) << 32;
+    pq.abs_diff(ref_q32) * 10_000 <= SECURE_BREAKER_BPS * ref_q32
+        || (!both_sides && !(if buy { ref_q32 > pq } else { ref_q32 < pq }))
 }
 
 #[cfg(test)]
@@ -1574,6 +1675,148 @@ mod tests {
     }
 
     #[test]
+    fn d2s_kernel_matches_secure_reference_vectors() {
+        let steps: [(u128, u128, u64, i64, u64, u64, i64, SecureStepMode, u128, u64, i64); 57] = [
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000000, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000003, 1790000001, SecureStepMode::Fresh, 4294991156929422222, 400000003, 1790000001),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000025, 1790000010, SecureStepMode::Fresh, 4295205905294222222, 400000025, 1790000010),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400004500, 1790001800, SecureStepMode::Fresh, 4337916968960000000, 400004500, 1790001800),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400648000, 1790259200, SecureStepMode::Fresh, 4337916968960000000, 400648000, 1790259200),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000010, 1790003600, SecureStepMode::Fresh, 4295062739717688888, 400000010, 1790003600),
+            (200, 4294967296000000000, 400000000, 1790000000, 500000000, 400004500, 1790001800, SecureStepMode::Fresh, 4252017623040000000, 400004500, 1790001800),
+            (200, 4294967296000000000, 400000000, 1790000000, 1001000000, 400004500, 1790001800, SecureStepMode::Fresh, 4299262263296000000, 400004500, 1790001800),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400004500, 1789999995, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Open, 4294967296000000000, 400000002, 1790000000),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400004500, 1790001800, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400004500, 1790001800, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (200, 425201762304, 400000000, 1790000000, 200, 400648000, 1790259200, SecureStepMode::Fresh, 429453779927, 400648000, 1790259200),
+            (200, 4294967296, 400000000, 1790000000, 2, 400000001, 1790000001, SecureStepMode::Fresh, 4294976840, 400000001, 1790000001),
+            (200, 79228162514264337589248983040, 400000000, 1790000000, 18446744073709551614, 400004500, 1790001800, SecureStepMode::Fresh, 79228162514264337584954015744, 400004500, 1790001800),
+            (200, 79228158219297041589248983040, 400000000, 1790000000, 18446744073709551615, 400004500, 1790001800, SecureStepMode::Fresh, 79228162514264337589248983040, 400004500, 1790001800),
+            (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000001, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (200, 4294967296000, 400000000, 1790000000, 2000, 400004500, 1790001800, SecureStepMode::Fresh, 4337916968960, 400004500, 1790001800),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000000, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000003, 1790000001, SecureStepMode::Fresh, 4295026948323555555, 400000003, 1790000001),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000025, 1790000010, SecureStepMode::Fresh, 4295563819235555555, 400000025, 1790000010),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400001800, 1790000720, SecureStepMode::Fresh, 4337916968960000000, 400001800, 1790000720),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400648000, 1790259200, SecureStepMode::Fresh, 4337916968960000000, 400648000, 1790259200),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000010, 1790003600, SecureStepMode::Fresh, 4295205905294222222, 400000010, 1790003600),
+            (500, 4294967296000000000, 400000000, 1790000000, 500000000, 400001800, 1790000720, SecureStepMode::Fresh, 4252017623040000000, 400001800, 1790000720),
+            (500, 4294967296000000000, 400000000, 1790000000, 1001000000, 400001800, 1790000720, SecureStepMode::Fresh, 4299262263296000000, 400001800, 1790000720),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400001800, 1789999995, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Open, 4294967296000000000, 400000002, 1790000000),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400001800, 1790000720, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400001800, 1790000720, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (500, 425201762304, 400000000, 1790000000, 200, 400648000, 1790259200, SecureStepMode::Fresh, 429453779927, 400648000, 1790259200),
+            (500, 4294967296, 400000000, 1790000000, 2, 400000001, 1790000001, SecureStepMode::Fresh, 4294991156, 400000001, 1790000001),
+            (500, 79228162514264337589248983040, 400000000, 1790000000, 18446744073709551614, 400001800, 1790000720, SecureStepMode::Fresh, 79228162514264337584954015744, 400001800, 1790000720),
+            (500, 79228158219297041589248983040, 400000000, 1790000000, 18446744073709551615, 400001800, 1790000720, SecureStepMode::Fresh, 79228162514264337589248983040, 400001800, 1790000720),
+            (500, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000001, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (500, 4294967296000, 400000000, 1790000000, 2000, 400001800, 1790000720, SecureStepMode::Fresh, 4337916968960, 400001800, 1790000720),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000000, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000003, 1790000001, SecureStepMode::Fresh, 4295086600647111111, 400000003, 1790000001),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000025, 1790000010, SecureStepMode::Fresh, 4296160342471111111, 400000025, 1790000010),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000900, 1790000360, SecureStepMode::Fresh, 4337916968960000000, 400000900, 1790000360),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400648000, 1790259200, SecureStepMode::Fresh, 4337916968960000000, 400648000, 1790259200),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000010, 1790003600, SecureStepMode::Fresh, 4295444514588444444, 400000010, 1790003600),
+            (1000, 4294967296000000000, 400000000, 1790000000, 500000000, 400000900, 1790000360, SecureStepMode::Fresh, 4252017623040000000, 400000900, 1790000360),
+            (1000, 4294967296000000000, 400000000, 1790000000, 1001000000, 400000900, 1790000360, SecureStepMode::Fresh, 4299262263296000000, 400000900, 1790000360),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000900, 1789999995, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Open, 4294967296000000000, 400000002, 1790000000),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000900, 1790000360, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000900, 1790000360, SecureStepMode::Frozen, 4294967296000000000, 400000000, 1790000000),
+            (1000, 425201762304, 400000000, 1790000000, 200, 400648000, 1790259200, SecureStepMode::Fresh, 429453779927, 400648000, 1790259200),
+            (1000, 4294967296, 400000000, 1790000000, 2, 400000001, 1790000001, SecureStepMode::Fresh, 4295015017, 400000001, 1790000001),
+            (1000, 79228162514264337589248983040, 400000000, 1790000000, 18446744073709551614, 400000900, 1790000360, SecureStepMode::Fresh, 79228162514264337584954015744, 400000900, 1790000360),
+            (1000, 79228158219297041589248983040, 400000000, 1790000000, 18446744073709551615, 400000900, 1790000360, SecureStepMode::Fresh, 79228162514264337589248983040, 400000900, 1790000360),
+            (1000, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000001, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
+            (1000, 4294967296000, 400000000, 1790000000, 2000, 400000900, 1790000360, SecureStepMode::Fresh, 4337916968960, 400000900, 1790000360),
+        ];
+        for (rate, ref_q32, slot0, unix0, p, slot, unix, mode, q, s, u) in steps {
+            let r = SecureReferenceVNext { lifted: true, ref_q32, slot: slot0, unix: unix0 };
+            assert_eq!(
+                secure_reference_step_at(rate, r, p, slot, unix, mode),
+                SecureReferenceVNext { lifted: true, ref_q32: q, slot: s, unix: u },
+                "{rate} {ref_q32} {p} {slot} {unix}"
+            );
+        }
+        let fills: [(u64, u64, u128, bool, u64); 17] = [
+            (1003000000, 1000000000, 4509715660800000000, true, 1053150000),
+            (1003000000, 1000000000, 4080218931200000000, true, 1003000000),
+            (626708498, 1000000000, 4294967296000000000, true, 1000000000),
+            (997000000, 1000000000, 4080218931200000000, false, 947150000),
+            (1367290592, 1000000000, 4294967296000000000, false, 1000000000),
+            (1995000000, 2000000000, 4337916968960000000, false, 1007475000),
+            (501000000, 500000000, 4252017623040000000, true, 991980000),
+            (1200000000, 1200000000, 4724464025600000000, false, 1100000000),
+            (1200000000, 1200000000, 5583457484800000000, true, 1300000000),
+            (1000, 1000, 4294967296001, true, 1001),
+            (1000, 1000, 4294967295999, false, 999),
+            (1, 2, 4294967296, false, 1),
+            (1, 1, 4294967296, true, 1),
+            (18446744073709551615, 4611686018427387904, 39614081257132168796771975168, true, 18446744073709551615),
+            (18446744073709551615, 18446744073709551615, 79228162514264337589248983040, false, 18446744073709551615),
+            (7, 3, 17179869184, true, 10),
+            (7, 4, 12884901888, false, 3),
+        ];
+        for (x, p, ref_q32, buy, expect) in fills {
+            assert_eq!(secure_fill(x, p, ref_q32, buy), expect, "{x} {p} {ref_q32} {buy}");
+        }
+        let breakers: [(u64, u128, bool, bool, bool); 9] = [
+            (1050000000, 4294967296000000000, true, true, true),
+            (1050000001, 4294967296000000000, true, false, true),
+            (1050000001, 4294967296000000000, false, false, false),
+            (949999999, 4294967296000000000, true, false, false),
+            (949999999, 4294967296000000000, false, false, true),
+            (2000000000, 4337916968960000000, true, false, true),
+            (2000000000, 4337916968960000000, false, false, false),
+            (200, 429453779927, true, false, true),
+            (200, 429453779927, false, false, false),
+        ];
+        for (p, ref_q32, buy, both, one) in breakers {
+            assert_eq!(secure_breaker_allows_open_sides(p, ref_q32, buy, true), both);
+            assert_eq!(secure_breaker_allows_open_sides(p, ref_q32, buy, false), one);
+            assert_eq!(secure_breaker_allows_open(p, ref_q32, buy), both);
+        }
+        let caps: [(u128, (u128, u128), (u128, u128)); 9] = [
+            (0, (0, 0), (0, 0)),
+            (145046, (3626150, 5076610), (14504, 36261)),
+            (1448615, (36215375, 50701525), (144861, 362153)),
+            (10000000, (250000000, 350000000), (1000000, 2500000)),
+            (20000000, (250000000, 700000000), (2000000, 5000000)),
+            (28571428, (250000000, 999999980), (2857142, 7142857)),
+            (28571429, (250000000, 1000000000), (2857142, 7142857)),
+            (100000000, (250000000, 1000000000), (10000000, 25000000)),
+            (1000000000, (250000000, 1000000000), (100000000, 250000000)),
+        ];
+        for (floor, secure, interim) in caps {
+            use crate::instructions::collateral_vnext_oracle::mixed_bounded::point_caps;
+            assert_eq!(point_caps(floor, true), secure);
+            assert_eq!(point_caps(floor, false), interim);
+        }
+        let n = 250_000_000;
+        let open = secure_reference_step(
+            SecureReferenceVNext { lifted: true, ref_q32: 1_000_000_000 << 32, slot: 100 - 1, unix: 10 },
+            2_000_000_000,
+            100,
+            10,
+            SecureStepMode::Open,
+        );
+        let close = secure_reference_step(open, 2_000_000_000, 103, 11, SecureStepMode::Fresh);
+        let entry = secure_fill(1_000_000_000, 1_000_000_000, open.ref_q32, true);
+        let exit = secure_fill(2_000_000_000, 2_000_000_000, close.ref_q32, false);
+        let (_, gain) = funded_net_and_capped(n, entry, exit, 0, 0, n as u64, false).unwrap();
+        assert_eq!(gain, 1388);
+        let (_, debit_only) = funded_net_and_capped(-n, 1_000_000_000, 1_000_000_000, 0, 1 << 70, n as u64, false).unwrap();
+        assert_eq!(debit_only, 0);
+        let (_, debit) = funded_net_and_capped(n, 1_000_000_000, 1_000_000_000, 0, 1 << 70, n as u64, false).unwrap();
+        assert!(debit < 0);
+    }
+
+    #[test]
     fn d2_funded_net_matches_n613_reference_vectors() {
         const CASES: [(i64, u64, u64, i128, i128, u64, i128, i128); 14] = [
             (250000000, 1000, 35925, 0, 0, 100000000, 8731250000, 250000000),
@@ -1593,14 +1836,14 @@ mod tests {
         ];
         for (size, entry, exit, checkpoint, current, allocated, raw, capped) in CASES {
             assert_eq!(
-                funded_net_and_capped(size, entry, exit, checkpoint, current, allocated),
+                funded_net_and_capped(size, entry, exit, checkpoint, current, allocated, true),
                 Ok((raw, capped)),
                 "{size} {entry} {exit} {checkpoint} {current} {allocated}"
             );
         }
-        assert!(funded_net_and_capped(0, 1, 1, 0, 0, 1).is_err());
-        assert!(funded_net_and_capped(1 << 44 | 1, 1, 1, 0, 0, 1).is_err());
-        assert!(funded_net_and_capped(1, 0, 1, 0, 0, 1).is_err());
-        assert!(funded_net_and_capped(1, 1, 0, 0, 0, 1).is_err());
+        assert!(funded_net_and_capped(0, 1, 1, 0, 0, 1, true).is_err());
+        assert!(funded_net_and_capped(1 << 44 | 1, 1, 1, 0, 0, 1, true).is_err());
+        assert!(funded_net_and_capped(1, 0, 1, 0, 0, 1, true).is_err());
+        assert!(funded_net_and_capped(1, 1, 0, 0, 0, 1, true).is_err());
     }
 }

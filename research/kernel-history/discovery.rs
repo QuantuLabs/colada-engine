@@ -89,3 +89,12 @@ pub fn span(start:i64,end:i64)->Result<(u32,u32),ProgramError> {
 
 /// Type tag of a current-point leg: it earns no interval, `overlap` excludes it and any `meet` with it is empty.
 pub const POINT:Support=Some((u32::MAX,u32::MAX));
+
+pub fn secure_caps(floor_usdc:u128)->(u128,u128) {
+    let cap=|ratio:u128,absolute:u128| floor_usdc.checked_mul(ratio).map_or(absolute,|v|(v/10_000).min(absolute));
+    (cap(250_000,SAMPLED_POSITION_ABSOLUTE),cap(350_000,SAMPLED_SHARED_ABSOLUTE))
+}
+
+pub fn point_caps(floor_usdc:u128,secure_lift:bool)->(u128,u128) {
+    if secure_lift {secure_caps(floor_usdc)} else {sampled_caps(floor_usdc)}
+}
