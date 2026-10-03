@@ -649,6 +649,23 @@ pub(crate) fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
     }
 }
 
+#[inline(never)]
+pub(crate) fn checked_secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> Result<u64, MathError> {
+    let pq = u128::from(p) << 32;
+    let s = U256::from_u128(if buy { pq.max(ref_q32) } else { pq.min(ref_q32) });
+    let (pd, one) = (U256::from_u64(p.max(1)), U256::from_u128(SECURE_ONE_Q32));
+    let prod = s.checked_mul_u64(x)?;
+    if buy {
+        let q = prod.div_ceil_bounded(pd)?;
+        let xq = if q.compare(s) == Ordering::Greater { q } else { s };
+        xq.div_ceil_bounded(one)?.try_u64()
+    } else {
+        let q = prod.div_rem_bounded(pd)?.0;
+        let xq = if q.compare(s) == Ordering::Less { q } else { s };
+        Ok(xq.div_rem_bounded(one)?.0.try_u64()?.max(1))
+    }
+}
+
 pub(crate) fn secure_breaker_allows_open(p: u64, ref_q32: u128, buy: bool) -> bool {
     secure_breaker_allows_open_sides(p, ref_q32, buy, SECURE_BREAKER_BOTH_SIDES)
 }
@@ -1813,7 +1830,11 @@ mod tests {
         ];
         for (x, p, ref_q32, buy, expect) in fills {
             assert_eq!(secure_fill(x, p, ref_q32, buy), expect, "{x} {p} {ref_q32} {buy}");
+            assert!(checked_secure_fill(x, p, ref_q32, buy).map_or(expect == u64::MAX, |fill| fill == expect));
         }
+        assert_eq!(checked_secure_fill(101, 100, SECURE_P_MAX_Q32, true), Err(MathError::InvalidNarrowing));
+        assert_eq!(checked_secure_fill(u64::MAX, 4611686018427387904, 39614081257132168796771975168, true), Err(MathError::InvalidNarrowing));
+        assert_eq!(checked_secure_fill(u64::MAX, u64::MAX, SECURE_P_MAX_Q32, false), Ok(u64::MAX));
         let breakers: [(u64, u128, bool, bool, bool); 9] = [
             (1050000000, 4294967296000000000, true, true, true),
             (1050000001, 4294967296000000000, true, false, true),
