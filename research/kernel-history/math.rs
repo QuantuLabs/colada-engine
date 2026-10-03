@@ -620,6 +620,7 @@ fn secure_reference_step_at(
     at(pq.clamp(lo, hi))
 }
 
+#[inline(never)]
 pub(crate) fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
     let pq = u128::from(p) << 32;
     let s = U256::from_u128(if buy { pq.max(ref_q32) } else { pq.min(ref_q32) });
