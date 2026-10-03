@@ -196,7 +196,7 @@ pub(crate) fn mul_q64_floor(left: u128, right: u128) -> Result<u128, MathError> 
         return Err(MathError::ZeroPrice);
     }
     let product = U256::from_u128(left).checked_mul_u128(right)?;
-    let value = product.div_rem_bounded(U256::from_u128(Q64_ONE))?.0;
+    let value = U256([product.0[1], product.0[2], product.0[3], 0]);
     if value.0[2] != 0 || value.0[3] != 0 {
         return Err(MathError::InvalidNarrowing);
     }
@@ -208,7 +208,12 @@ pub(crate) fn mul_q64_ceil(left: u128, right: u128) -> Result<u128, MathError> {
         return Err(MathError::ZeroPrice);
     }
     let product = U256::from_u128(left).checked_mul_u128(right)?;
-    let value = product.div_ceil_bounded(U256::from_u128(Q64_ONE))?;
+    let value = U256([product.0[1], product.0[2], product.0[3], 0]);
+    let value = if product.0[0] != 0 {
+        value.checked_add(U256::ONE)?
+    } else {
+        value
+    };
     if value.0[2] != 0 || value.0[3] != 0 {
         return Err(MathError::InvalidNarrowing);
     }
@@ -667,6 +672,49 @@ mod tests {
         "../../../../../tests/fixtures/permissionless-collateral-s00p/conversion-kernel-r2.json"
     );
     const FIXTURE_SHA256: &str = "ccd8b29d553e17cc35449a811efc201004b25b612868d7d6929def0a3112cd43";
+
+    #[test]
+    fn mul_q64_limb_shift_matches_generic_division() {
+        fn original(left: u128, right: u128, ceil: bool) -> Result<u128, MathError> {
+            if left == 0 || right == 0 {
+                return Err(MathError::ZeroPrice);
+            }
+            let product = U256::from_u128(left).checked_mul_u128(right)?;
+            let value = if ceil {
+                product.div_ceil_bounded(U256::from_u128(Q64_ONE))?
+            } else {
+                product.div_rem_bounded(U256::from_u128(Q64_ONE))?.0
+            };
+            if value.0[2] != 0 || value.0[3] != 0 {
+                return Err(MathError::InvalidNarrowing);
+            }
+            Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
+        }
+        for (left, right) in [
+            (0, 1),
+            (1, 0),
+            (1, 1),
+            (Q64_ONE, Q64_ONE),
+            (Q64_ONE - 1, Q64_ONE + 1),
+            (u128::MAX, Q64_ONE),
+            ((1_u128 << 96) - 1, (1_u128 << 96) + 1),
+            (1_u128 << 96, 1_u128 << 96),
+            (u128::MAX, u128::MAX),
+        ] {
+            assert_eq!(mul_q64_floor(left, right), original(left, right, false));
+            assert_eq!(mul_q64_ceil(left, right), original(left, right, true));
+        }
+        assert_eq!(mul_q64_floor(1, 1), Ok(0));
+        assert_eq!(mul_q64_ceil(1, 1), Ok(1));
+        assert_eq!(
+            mul_q64_floor((1_u128 << 96) - 1, (1_u128 << 96) + 1),
+            Ok(u128::MAX)
+        );
+        assert_eq!(
+            mul_q64_ceil((1_u128 << 96) - 1, (1_u128 << 96) + 1),
+            Err(MathError::InvalidNarrowing)
+        );
+    }
 
     #[test]
     fn significant_bit_division_boundaries_preserve_floor_remainder_and_ceil() {
