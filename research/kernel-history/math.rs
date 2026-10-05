@@ -256,24 +256,6 @@ pub(crate) fn compose_dispersion_bps(left: u16, right: u16) -> Result<u16, MathE
     Ok(value as u16)
 }
 
-pub(crate) fn normalize_sol_atom_cap_quote_e6(
-    cap_sol_atoms: u128,
-    sol_quote_lower_q64: u128,
-) -> Result<u128, MathError> {
-    if cap_sol_atoms == 0 || sol_quote_lower_q64 == 0 {
-        return Err(MathError::ZeroPrice);
-    }
-    let numerator = U256::from_u128(cap_sol_atoms)
-        .checked_mul_u128(sol_quote_lower_q64)?
-        .checked_mul_u64(QUOTE_E6_SCALE)?;
-    let denominator = U256::from_u64(1_000_000_000).checked_shl_64()?;
-    let value = numerator.div_rem_bounded(denominator)?.0;
-    if value.0[2] != 0 || value.0[3] != 0 {
-        return Err(MathError::InvalidNarrowing);
-    }
-    Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PriceBoundsQ64 {
     p_lo: PriceQ64,

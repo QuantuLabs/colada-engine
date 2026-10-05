@@ -98,3 +98,44 @@ pub fn secure_caps(floor_usdc:u128)->(u128,u128) {
 pub fn point_caps(floor_usdc:u128,secure_lift:bool)->(u128,u128) {
     if secure_lift {secure_caps(floor_usdc)} else {sampled_caps(floor_usdc)}
 }
+
+#[inline(always)]
+pub fn bounded_worst_case_closeout_notional_for_liquidity(
+    max_trader_open_interest_bps: u16,
+    liquidity_basis: u64,
+) -> Result<u64, ProgramError> {
+    let cap = u128::from(liquidity_basis)
+        .checked_mul(u128::from(max_trader_open_interest_bps))
+        .ok_or(ProgramError::from(ColadaError::Overflow))?
+        / 10_000;
+    if cap == 0 {
+        return Err(ProgramError::from(ColadaError::InvalidConfig));
+    }
+    u64::try_from(cap).map_err(|_| ProgramError::from(ColadaError::Overflow))
+}
+
+#[inline(always)]
+pub fn validate_cap_v2_live_post_notional(
+    max_trader_open_interest_bps: u16,
+    free_equity: u64,
+    kappa_vault_bps: u16,
+    max_notional_policy: u128,
+    post_abs_notional: u64,
+) -> ProgramResult {
+    let r_vault = u128::from(free_equity)
+        .checked_mul(u128::from(kappa_vault_bps))
+        .ok_or(ProgramError::from(ColadaError::Overflow))?
+        / 10_000;
+    let closeout_cap = u128::from(bounded_worst_case_closeout_notional_for_liquidity(
+        max_trader_open_interest_bps,
+        free_equity,
+    )?);
+    let r_vault_live = r_vault.min(closeout_cap);
+    let post_cap = u128::from(MAX_POSITION_NOTIONAL_QUOTE_E6)
+        .min(max_notional_policy)
+        .min(r_vault_live);
+    if post_cap == 0 || u128::from(post_abs_notional) > post_cap {
+        return Err(ColadaError::ExecutionBoundsExceeded.into());
+    }
+    Ok(())
+}
