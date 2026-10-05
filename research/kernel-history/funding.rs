@@ -72,7 +72,7 @@ pub fn price_pnl_for_quote_notional(
         .checked_mul(signed_close_size)
         .ok_or(ProgramError::from(ColadaError::Overflow))?;
     let pnl = div_i128_floor(pnl_numerator, i128::from(entry_price))?;
-    i64::try_from(pnl).map_err(|_| ProgramError::from(ColadaError::Overflow))
+    i64::try_from(pnl.min(i128::from(i64::MAX))).map_err(|_| ProgramError::from(ColadaError::Overflow))
 }
 
 #[inline(always)]
