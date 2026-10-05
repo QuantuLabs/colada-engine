@@ -35,8 +35,7 @@ fn cap_from_floor(floor: u128, deviation: u16, safety: u16) -> Result<u128, Prog
 
 /// Position and shared FeedOI caps from an authenticated USDC6 depth floor.
 pub fn sampled_caps(floor_usdc:u128)->(u128,u128) {
-    let cap=|ratio:u128,absolute:u128| floor_usdc.checked_mul(ratio).map_or(absolute,|v|(v/10_000).min(absolute));
-    (cap(1_000,SAMPLED_POSITION_ABSOLUTE),cap(2_500,SAMPLED_SHARED_ABSOLUTE))
+    (floor_usdc.saturating_mul(1_000)/10_000,floor_usdc.saturating_mul(2_500)/10_000)
 }
 
 /// floor(F * lowerQ64 * 1e6 / (10^decimals * 2^64)); USDC6 passes F unchanged.
@@ -91,8 +90,7 @@ pub fn span(start:i64,end:i64)->Result<(u32,u32),ProgramError> {
 pub const POINT:Support=Some((u32::MAX,u32::MAX));
 
 pub fn secure_caps(floor_usdc:u128)->(u128,u128) {
-    let cap=|ratio:u128,absolute:u128| floor_usdc.checked_mul(ratio).map_or(absolute,|v|(v/10_000).min(absolute));
-    (cap(250_000,SAMPLED_POSITION_ABSOLUTE),cap(350_000,SAMPLED_SHARED_ABSOLUTE))
+    (floor_usdc.saturating_mul(25),floor_usdc.saturating_mul(35))
 }
 
 pub fn point_caps(floor_usdc:u128,secure_lift:bool)->(u128,u128) {
