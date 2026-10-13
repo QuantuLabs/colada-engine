@@ -74,3 +74,12 @@ fn margin_pair_admissible(
             && max_confidence_bps > 0
             && max_confidence_bps <= 100)
 }
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub(super) fn validate_requested_initial_margin(requested: u16, market: u16) -> ProgramResult {
+    if requested < market || (requested > 5_000 && requested != market) {
+        return Err(ColadaError::InitialMarginOutOfRange.into());
+    }
+    Ok(())
+}
