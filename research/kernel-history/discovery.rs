@@ -137,3 +137,7 @@ pub fn validate_cap_v2_live_post_notional(
     }
     Ok(())
 }
+
+pub const POINT_CAP_PARAMS:[u16;3]=[3,50,3];
+
+pub fn live_point_cap(depth_usdc:u128)->u128 {depth_usdc.saturating_mul(u128::from(POINT_CAP_PARAMS[0]))}
