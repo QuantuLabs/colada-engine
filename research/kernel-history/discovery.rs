@@ -148,7 +148,14 @@ pub const PERM_DEPTH_MULTIPLE_BPS: u128 = 10_000;
 
 pub const PERM_FEED_OI_CAP: u128 = 50_000_000_000;
 
-/// `min(PERM_FEED_OI_CAP, depth × PERM_DEPTH_MULTIPLE_BPS / 10_000)`.
-pub fn depth_budget(depth_usd_e6: u128) -> Result<u128, ProgramError> {
-    Ok((depth_usd_e6.checked_mul(PERM_DEPTH_MULTIPLE_BPS).ok_or_else(bad)? / 10_000).min(PERM_FEED_OI_CAP))
+/// `min(PERM_FEED_OI_CAP, depth × multiple / 10_000)`.
+pub fn depth_budget(depth_usd_e6: u128, multiple_bps: u128) -> Result<u128, ProgramError> {
+    Ok((depth_usd_e6.checked_mul(multiple_bps).ok_or_else(bad)? / 10_000).min(PERM_FEED_OI_CAP))
+}
+
+pub const PERM_SINGLE_ROW_MULTIPLE_BPS: u128 = 2_500;
+
+/// Budget multiple: a quarter of the formula for a single contributing row.
+pub fn depth_multiple_bps(rows: usize) -> u128 {
+    if rows == 1 { PERM_SINGLE_ROW_MULTIPLE_BPS } else { PERM_DEPTH_MULTIPLE_BPS }
 }
