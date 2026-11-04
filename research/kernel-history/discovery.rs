@@ -143,3 +143,12 @@ pub const POINT_CAP_PARAMS:[u16;4]=[3,50,3,10];
 pub fn live_point_cap(depth_usdc:u128)->u128 {depth_usdc.saturating_mul(u128::from(POINT_CAP_PARAMS[0]))}
 
 pub fn live_point_market_cap(depth_usdc:u128)->u128 {depth_usdc.saturating_mul(u128::from(POINT_CAP_PARAMS[3]))}
+
+pub const PERM_DEPTH_MULTIPLE_BPS: u128 = 10_000;
+
+pub const PERM_FEED_OI_CAP: u128 = 50_000_000_000;
+
+/// `min(PERM_FEED_OI_CAP, depth × PERM_DEPTH_MULTIPLE_BPS / 10_000)`.
+pub fn depth_budget(depth_usd_e6: u128) -> Result<u128, ProgramError> {
+    Ok((depth_usd_e6.checked_mul(PERM_DEPTH_MULTIPLE_BPS).ok_or_else(bad)? / 10_000).min(PERM_FEED_OI_CAP))
+}
