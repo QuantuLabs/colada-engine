@@ -190,6 +190,11 @@ unchanged. It is not part of the matrix.
   funding-crank fixtures install a next-interval rate and do not exercise a
   nonzero elapsed funding payment. `proof_lq3a_profit_routes_through_adl` does not establish profit
   routing through ADL.
+- The Percolator-engine harnesses are the set inherited at the fork point. In the
+  following week upstream strengthened most of them (symbolic instead of fixed
+  inputs, the full invariant checked before and after each operation); 128 of
+  the 147 harnesses here keep the earlier, weaker form. See
+  [Provenance](PROVENANCE.md).
 - Percolator-engine harnesses set their initial clocks and aggregates explicitly; two
   partial-liquidation families use zero fees on purpose.
 - Percolator-engine proofs do not cover the root crate, and neither crate's proofs cover

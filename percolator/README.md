@@ -17,6 +17,9 @@ root, and its proofs do not cover that crate.
 - [`audit.md`](audit.md): the upstream proof timing and audit notes, kept as an archive.
 - `kani_audit_full.tsv`: the upstream result table, unchanged.
 
+The engine stays on the February 2026 architecture. Upstream has since
+rewritten it; [Provenance](../docs/PROVENANCE.md) lists the known differences.
+
 Current outcomes are in the root [result matrix](../verification/kani-results.tsv);
 domains, conditional assertions and unresolved cases are in the
 [verification guide](../docs/VERIFICATION.md).

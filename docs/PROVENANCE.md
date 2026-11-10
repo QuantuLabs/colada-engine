@@ -82,6 +82,39 @@ loop or type bounds, with unwinding assertions kept. Each modified file carries
 a change notice. `tests/fuzzing.proptest-regressions` and `kani_audit_full.tsv`
 are unchanged.
 
+### Upstream after the fork point
+
+Upstream kept changing after `d8dad98`. It strengthened its Kani harnesses from
+2026-02-13 to 2026-02-19, rewrote the engine from 2026-03-13 and removed
+`src/percolator.rs` on 2026-05-14. That history is not merged here;
+`percolator/` stays on the February architecture.
+
+Known differences from upstream that are not ported yet:
+
+- Liquidation does not restart warmup when mark settlement adds available
+  profit (upstream `700b8564`).
+- Constructors accept a maintenance margin above the initial margin (upstream
+  `da085a00`, `39ae652c`).
+- `deposit_fee_credits` accepts an amount that overflows the signed credit
+  balance (upstream `c3933293`).
+- Garbage collection frees an empty account that still holds prepaid fee
+  credits (upstream `4777cf50`, `f7d2de85`).
+- Fee debt is not swept when warmup converts profit to capital (upstream
+  `1ab35740`).
+- Vault, insurance and capital totals use saturating additions on inflows
+  (upstream `1ab35740`, `b65a14a1`, `f4930c2e`).
+- Haircut products (`effective_pos_pnl`, profit conversion) multiply with
+  saturation before dividing, so backed profit is undercounted when
+  `pnl × haircut numerator` exceeds `2^128`. Upstream moved to wide arithmetic
+  in `9bc0fab5`.
+- `account_equity` clamps capital to `i128` before adding PnL instead of
+  evaluating the sum exactly (upstream `640055a8`).
+- After the slot advances by more than 31,536,000 without funding accrual, the
+  crank returns `Overflow` until accrual catches up in bounded steps (upstream
+  `379c3cac`).
+- The February harness strengthening (upstream `301ab914` to `e0956618`): 128 of
+  the 147 harnesses keep the earlier form.
+
 The two crates use different accounting models. Proofs of the Percolator engine do not cover
 the root crate; see [Verification](VERIFICATION.md).
 
