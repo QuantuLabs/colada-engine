@@ -10,6 +10,8 @@ fn main() {
     let initial_margin = margin::initial_margin_requirement(notional, 500).unwrap();
 
     // Collateral is a nine-decimal token priced between 149.5 and 150.5 (Q64.64).
+    // It counts for half its value, at the lower price: 50.00 of margin locks
+    // 100.00 / 149.5 tokens, rounded up.
     let q64 = |tenths: u128| (tenths << 64) / 10;
     let prices = math::checked_price_bounds(q64(1_495), q64(1_505)).unwrap();
     let free_atoms: u64 = 100 * 1_000_000_000;
@@ -32,6 +34,10 @@ fn main() {
         true,
     )
     .unwrap();
+
+    assert_eq!(initial_margin, 50_000_000);
+    assert_eq!(open.required_allocation_atoms, 668_896_322);
+    assert_eq!((net, capped), (19_750_000, 19_750_000));
 
     println!("initial margin        {initial_margin} (quote x 10^6)");
     println!("collateral to lock    {} atoms", open.required_allocation_atoms);

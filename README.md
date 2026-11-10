@@ -53,8 +53,8 @@ New code for Colada's program (`src/`):
 - Funding index accrual with a carried remainder, so no funding is lost to
   truncation between steps.
 - Exposure caps computed from liquidity depth.
-- Kani harnesses for these functions, and a CI job that replays every harness
-  of both crates on each push and fails on any counterexample or regression.
+- Kani harnesses for these functions, and a CI job that replays the harnesses of
+  a crate whenever its code changes and fails on any counterexample or regression.
 
 [Provenance](docs/PROVENANCE.md) has the full list of changes.
 

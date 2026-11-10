@@ -136,13 +136,19 @@ bits or the timeout changes resources, not the property checked.
 [`verify.yml`](../.github/workflows/verify.yml) runs on every push to `main` and
 every pull request, on `ubuntu-24.04` with Rust 1.98.0:
 
-1. The locked check and test commands above.
-2. `kani_ci.py plan` splits every harness of both packages into 16 shards,
-   balanced by recorded run time.
-3. Each shard runs the runner with a 1500-second limit per harness and object
+1. The locked check and test commands above, then `cargo run --example position`,
+   which asserts its own results.
+2. `kani_ci.py affected` selects the packages to replay: `colada-engine` when
+   `src/` or `tests/` changed, `colada` when `percolator/src`, `percolator/tests`
+   or its manifest changed, both when the workspace manifests, `scripts/`, the
+   workflow or the result matrix changed. A commit that touches none of these
+   runs step 1 only. A manual run replays both packages.
+3. `kani_ci.py plan` splits the selected harnesses into 16 shards, balanced by
+   recorded run time.
+4. Each shard runs the runner with a 1500-second limit per harness and object
    bits 14 for `colada-engine`, 12 for `colada`.
-4. `kani_ci.py gate` prints every harness outcome and fails the run if any
-   harness reports `FAIL`, any harness has no result, or any harness recorded
+5. `kani_ci.py gate` prints every replayed harness outcome and fails the run if
+   any harness reports `FAIL`, any harness has no result, or any harness recorded
    `PASS` in the matrix does not pass again.
 
 A green run therefore means: no counterexample, and no regression of a recorded

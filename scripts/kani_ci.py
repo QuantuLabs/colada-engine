@@ -7,9 +7,13 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = {'colada-engine': 'tests/kani*.rs', 'colada': 'percolator/tests/kani*.rs'}
+# Paths whose change requires replaying a package; the shared ones replay both.
+SHARED = r'Cargo\.(toml|lock)$|scripts/|\.github/workflows/|verification/'
+INPUTS = {'colada-engine': r'src/|tests/', 'colada': r'percolator/(src/|tests/|Cargo\.toml$)'}
 
 
 def harnesses(package):
@@ -56,12 +60,22 @@ def classify(code, log):
     return 'INCONCLUSIVE'
 
 
-def plan(count, only=''):
-    if count < len(SOURCES):
+def affected(base):
+    """Packages whose proof inputs differ between `base` and HEAD; all of them if unknown."""
+    diff = subprocess.run(['git', 'diff', '--name-only', base, 'HEAD', '--'], cwd=ROOT,
+                          capture_output=True, text=True)
+    if not base or diff.returncode:
+        return list(SOURCES)
+    names = diff.stdout.splitlines()
+    return [p for p in SOURCES if any(re.match(f'{SHARED}|{INPUTS[p]}', n) for n in names)]
+
+
+def plan(count, only='', packages=SOURCES):
+    if count < len(packages):
         raise ValueError('Need at least one shard per package')
     baseline = recorded()
     work = {p: [(h, float(baseline.get((p, h), {}).get('seconds') or 120))
-                for h in harnesses(p) if re.search(only, h)] for p in SOURCES}
+                for h in harnesses(p) if re.search(only, h)] for p in packages}
     work = {p: w for p, w in work.items() if w}
     if not work:
         raise ValueError('The filter selects no harness')
@@ -84,7 +98,7 @@ def plan(count, only=''):
     return {'include': matrix}
 
 
-def gate(directory, only=''):
+def gate(directory, only='', packages=SOURCES):
     baseline = recorded()
     actual = {}
     invalid = False
@@ -102,7 +116,7 @@ def gate(directory, only=''):
     lines = ['| Package | Harness | Expected status | CI status | Seconds |',
              '| --- | --- | --- | --- | --- |']
     totals = collections.Counter()
-    for p in SOURCES:
+    for p in packages:
         for h in harnesses(p):
             if not re.search(only, h):
                 continue
@@ -130,21 +144,29 @@ def main():
     planner = sub.add_parser('plan')
     planner.add_argument('--shards', type=int, default=16)
     planner.add_argument('--only', default='', help='regex selecting harness names')
+    sub.add_parser('affected').add_argument('base', help='commit to compare HEAD with')
     c = sub.add_parser('classify')
     c.add_argument('code', type=int)
     c.add_argument('log', type=Path)
     gater = sub.add_parser('gate')
     gater.add_argument('directory')
     gater.add_argument('--only', default='')
+    for p in (planner, gater):
+        p.add_argument('--packages', default=','.join(SOURCES), help='comma-separated packages')
     args = parser.parse_args()
+    packages = [p for p in getattr(args, 'packages', '').split(',') if p]
+    if any(p not in SOURCES for p in packages):
+        raise ValueError(f'Unknown package in {packages}')
     if args.command == 'list':
         print('\n'.join(harnesses(args.package)))
     elif args.command == 'plan':
-        print(json.dumps(plan(args.shards, args.only)))
+        print(json.dumps(plan(args.shards, args.only, packages)))
+    elif args.command == 'affected':
+        print(','.join(affected(args.base)))
     elif args.command == 'classify':
         print(classify(args.code, args.log.read_text(errors='replace')))
     else:
-        return gate(args.directory, args.only)
+        return gate(args.directory, args.only, packages)
     return 0
 
 

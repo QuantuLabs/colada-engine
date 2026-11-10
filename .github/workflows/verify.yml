@@ -10,6 +10,10 @@ on:
         description: Regex selecting harness names (empty = whole portfolio)
         type: string
         default: ''
+      timeout_seconds:
+        description: Per-harness limit in seconds (60-3600)
+        type: string
+        default: '1500'
 
 permissions:
   contents: read
@@ -34,24 +38,35 @@ jobs:
       - run: rustup override set 1.98.0
       - run: cargo check --workspace --locked
       - run: cargo test --workspace --features colada/test,colada/fuzz --locked
+      - run: cargo run --example position --locked
 
   plan:
-    name: Plan full Kani portfolio
+    name: Plan Kani replay
     runs-on: ubuntu-24.04
     outputs:
+      packages: ${{ steps.plan.outputs.packages }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: plan
         env:
           ONLY: ${{ inputs.only }}
-        run: echo "matrix=$(python3 scripts/kani_ci.py plan --shards "$KANI_SHARDS" --only "$ONLY")" >> "$GITHUB_OUTPUT"
+          # Empty on a manual run: every package is replayed.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          packages=$(python3 scripts/kani_ci.py affected "$BASE")
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          if [ -n "$packages" ]; then
+            echo "matrix=$(python3 scripts/kani_ci.py plan --shards "$KANI_SHARDS" --only "$ONLY" --packages "$packages")" >> "$GITHUB_OUTPUT"
+          fi
 
   kani:
     name: Kani / ${{ matrix.package }} / shard ${{ matrix.shard }}
     needs: plan
+    if: needs.plan.outputs.packages != ''
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -69,7 +84,7 @@ jobs:
         env:
           KANI_PACKAGE: ${{ matrix.package }}
           KANI_CONTINUE_ON_FAILURE: '1'
-          KANI_TIMEOUT_SECONDS: '1500'
+          KANI_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds || '1500' }}
           KANI_OBJECT_BITS: ${{ matrix.package == 'colada-engine' && '14' || '12' }}
           KANI_RESULTS_FILE: target/kani-audit/${{ matrix.package }}/results.tsv
           HARNESSES: ${{ toJSON(matrix.harnesses) }}
@@ -87,9 +102,9 @@ jobs:
             target/kani-audit/**/*.log
 
   gate:
-    name: Full Kani result matrix gate
+    name: Kani result matrix gate
     needs: [plan, kani]
-    if: always()
+    if: always() && needs.plan.outputs.packages != ''
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -103,4 +118,5 @@ jobs:
         if: always()
         env:
           ONLY: ${{ inputs.only }}
-        run: python3 scripts/kani_ci.py gate kani-results --only "$ONLY"
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: python3 scripts/kani_ci.py gate kani-results --only "$ONLY" --packages "$PACKAGES"
