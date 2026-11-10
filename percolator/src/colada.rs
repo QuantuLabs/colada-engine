@@ -1311,6 +1311,11 @@ impl RiskEngine {
         Ok(())
     }
 
+    fn avail_gross_of(&self, idx: u16) -> u128 {
+        let a = &self.accounts[idx as usize];
+        clamp_pos_i128(a.pnl.get()).saturating_sub(a.reserved_pnl as u128)
+    }
+
     /// Touch account for liquidation paths: settles funding, mark, and fees but
     /// uses best-effort fee settle since we're about to liquidate anyway.
     fn touch_account_for_liquidation(
@@ -1322,7 +1327,11 @@ impl RiskEngine {
         // Funding settle is required for correct pnl
         self.touch_account(idx)?;
         // Best-effort mark-to-market (saturating — never wedges on extreme PnL)
+        let old_avail_gross = self.avail_gross_of(idx);
         self.settle_mark_to_oracle_best_effort(idx, oracle_price)?;
+        if self.avail_gross_of(idx) > old_avail_gross {
+            self.update_warmup_slope(idx)?;
+        }
         // Best-effort fees; margin check would just block the liquidation we need to do
         let _ = self.settle_maintenance_fee_best_effort_for_crank(idx, now_slot)?;
         Ok(())

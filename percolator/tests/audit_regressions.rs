@@ -352,3 +352,33 @@ fn crank_does_not_forgive_caller_fee_debt() {
     assert_eq!(engine.accounts[user as usize].capital.get(), 900);
     assert_eq!(engine.insurance_fund.balance.get(), 100);
 }
+
+#[test]
+fn liquidation_mark_gain_restarts_warmup() {
+    let mut params = default_params();
+    params.liquidation_fee_bps = 0;
+    let mut engine = new_test_engine(params);
+    let user = engine.add_user(0).unwrap();
+    let lp = engine.add_lp([1u8; 32], [2u8; 32], 0).unwrap();
+
+    engine.current_slot = 90;
+    engine.set_capital(user as usize, 500);
+    engine.set_pnl(user as usize, 1_000);
+    engine.accounts[user as usize].position_size = I128::new(10_000_000);
+    engine.accounts[user as usize].entry_price = 1_000_000;
+    engine.accounts[user as usize].warmup_slope_per_step = U128::new(10);
+    engine.accounts[user as usize].warmup_started_at_slot = 0;
+
+    engine.set_capital(lp as usize, 10_000_000);
+    engine.accounts[lp as usize].position_size = I128::new(-10_000_000);
+    engine.accounts[lp as usize].entry_price = 1_000_000;
+    engine.total_open_interest = U128::new(20_000_000);
+    engine.vault = U128::new(10_000_500 + 10_000);
+
+    assert!(engine.liquidate_at_oracle(user, 90, 1_000_001).unwrap());
+    assert_eq!(
+        engine.accounts[user as usize].capital.get(),
+        500,
+        "mark gain at liquidation must restart warmup before conversion"
+    );
+}
