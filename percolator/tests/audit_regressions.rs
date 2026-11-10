@@ -513,3 +513,13 @@ fn constructors_reject_fees_above_full_notional() {
         assert!(std::panic::catch_unwind(|| RiskEngine::new(params)).is_err());
     }
 }
+
+#[test]
+fn owner_cannot_be_cleared() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap();
+    assert_eq!(engine.set_owner(user, [0; 32], [0; 32]), Err(RiskError::Unauthorized));
+    engine.set_owner(user, [1; 32], [1; 32]).unwrap();
+    assert_eq!(engine.set_owner(user, [1; 32], [0; 32]), Err(RiskError::Unauthorized));
+    assert_eq!(engine.accounts[user as usize].owner, [1; 32]);
+}

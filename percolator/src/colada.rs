@@ -1386,6 +1386,9 @@ impl RiskEngine {
         if idx as usize >= MAX_ACCOUNTS || !self.is_used(idx as usize) {
             return Err(RiskError::Unauthorized);
         }
+        if owner == [0u8; 32] {
+            return Err(RiskError::Unauthorized);
+        }
         let current_owner = self.accounts[idx as usize].owner;
         let unowned = current_owner == [0u8; 32];
         let authorized = if unowned {
