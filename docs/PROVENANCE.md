@@ -100,6 +100,10 @@ Fixes ported from upstream, each with a regression test in
 | Garbage collection keeps an account that holds prepaid fee credits | `4777cf50`, `f7d2de85` |
 | Fee debt is swept when warmup converts profit to capital | `1ab35740` |
 | Account creation, deposits, fee-credit deposits and insurance top-ups reject an inflow that overflows the vault, insurance or capital totals | `1ab35740`, `b65a14a1`, `f4930c2e` |
+| Equity is evaluated exactly instead of clamping capital before adding PnL | `640055a8` |
+| Funding accrual fast-forwards an idle period when the stored rate is zero | `379c3cac`, `072a62eb`, `af18b090` |
+| Constructors reject fee rates above 10,000 bps and the trading fee uses checked arithmetic | current upstream behaviour |
+| `set_owner` rejects the all-zero owner | `8685828a` |
 
 Known differences that are not ported:
 
@@ -107,13 +111,17 @@ Known differences that are not ported:
   saturation before dividing, so backed profit is undercounted when
   `pnl × haircut numerator` exceeds `2^128`. Upstream moved to wide arithmetic
   in `9bc0fab5`.
-- `account_equity` clamps capital to `i128` before adding PnL instead of
-  evaluating the sum exactly (upstream `640055a8`).
-- After the slot advances by more than 31,536,000 without funding accrual, the
-  crank returns `Overflow` until accrual catches up in bounded steps (upstream
-  `379c3cac`).
+- After the slot advances by more than 31,536,000 without funding accrual at a
+  nonzero rate, the crank returns `Overflow` until accrual catches up in bounded
+  steps.
 - Internal setters and aggregate recomputation still use saturating additions;
   only the public inflow paths above are checked.
+- Funding is quantized per accrual call, as in the February specification, so
+  many short accruals can yield less funding than one long accrual. Upstream
+  later added a remainder.
+- The keeper crank ignores errors from per-account maintenance-fee settlement,
+  funding settlement and forced close, so an account it cannot settle is skipped
+  instead of failing the crank.
 - The February harness strengthening (upstream `301ab914` to `e0956618`): 128 of
   the 147 harnesses keep the earlier form.
 

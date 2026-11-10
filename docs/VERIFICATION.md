@@ -7,7 +7,7 @@ cargo check --workspace --locked
 cargo test --workspace --features colada/test,colada/fuzz --locked
 ```
 
-Tests: 26 in `colada-engine` and 140 in `colada`. One extended fuzz test is ignored by default; run it
+Tests: 26 in `colada-engine` and 144 in `colada`. One extended fuzz test is ignored by default; run it
 with `--ignored`. The root crate's tests replay the conformance vectors in
 `tests/fixtures/` and check arithmetic boundaries. Default workspace commands
 select only the root crate; `--workspace` adds the Percolator engine (`colada`).
