@@ -1,3 +1,5 @@
+*Archived upstream proof and audit notes. Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors (source paths renamed to `src/colada.rs`).*
+
 # Kani Proof Timing Report
 Generated: 2026-02-12
 
@@ -457,7 +459,7 @@ Three rounds of proof hardening addressed vacuity risks, naming correctness, and
 
 ### Cleanup — Dead TODO removal (`49664f7`)
 - Removed `APPLY_ADL` TODO: function does not exist (system uses haircut ratios, not ADL)
-- Removed `PS3` TODO: `panic_settle_all` is not called from colada-prog
+- Removed `PS3` TODO: `panic_settle_all` is not called from percolator-prog
 - Kept `TOP_UP_INSURANCE_FUND` TODO: function is live in production
 
 ---

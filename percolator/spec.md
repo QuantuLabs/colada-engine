@@ -1,6 +1,8 @@
+*Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors. Specification of the engine in this directory, not of the root `colada-engine` crate.*
+
 # Risk Engine Spec (Source of Truth) — v7 (Fee-Debt-as-Liability + Crank Warmup + Initial Margin + Funding Anti-Retroactivity + Position Flip + Fee Ceiling + Warmup Restart on Mark)
 **Design:** **Protected Principal + Junior Profit Claims with Global Haircut Ratio**  
-**Status:** Implementation source-of-truth (normative language: MUST / MUST NOT / SHOULD / MAY)   (updated: fee debt is margin liability; crank advances warmup; risk-increasing trades use initial margin; funding accrual is anti-retroactive; position sign-flips require initial margin; trade fees use ceiling division; warmup restarts on mark-to-market PnL increase)
+**Status:** Implementation source-of-truth (normative language: MUST / MUST NOT / SHOULD / MAY)   (updated: fee debt is margin liability; crank advances warmup; risk-increasing trades use initial margin; funding accrual is anti-retroactive; position sign-flips require initial margin; trade fees use ceiling division; warmup restarts on PnL increase; funding rates are capped; slots are monotonic)
 **Scope:** Perpetual DEX risk engine for a single quote-token vault (e.g., Solana program-owned vault).  
 
 **Goal:** Achieve the same safety goals as the prior design (oracle manipulation resistance within a warmup window, principal protection, bounded insolvency handling, conservation, and liveness) with **no global ADL scans** and **no “recover stranded” function**, while preventing “PnL zombie” accounts from indefinitely poisoning the global haircut ratio.
@@ -92,6 +94,9 @@ The engine stores at least:
   **Implementation note:** May be wrapped in a struct with telemetry fields (e.g., `fee_revenue`). For solvency math, only the balance is relevant.
 - `I_floor: u128` — insurance floor threshold (policy parameter; does not affect solvency math directly but may gate risk-increasing ops).
 - `current_slot: u64`
+- `max_accounts: u64` — runtime account cap, sanitized to the compile-time `MAX_ACCOUNTS` ceiling.
+- `max_funding_rate_bps_per_slot: u64` — maximum absolute per-slot funding rate accepted from wrappers/keepers.
+- `max_exec_deviation_bps: u64` — protocol backstop for matcher execution-price deviation from oracle; wrappers MUST still enforce user limit/slippage policy.
 
 Funding (if supported):
 - `F_global: i128`
@@ -191,8 +196,8 @@ When performance requires simultaneous update of multiple accounts (e.g., trade 
 ## 5. Warmup (time-gated conversion of junior profits to protected principal)
 
 ### 5.1 Parameter
-- `T = warmup_period_slots` (u64).  
-If `T == 0`, warmup is instantaneous.
+- `T = warmup_period_slots` (u64).
+- Implementations MUST NOT allow `T == 0` to create instant warmup. They MUST reject it or sanitize it to a positive period before use.
 
 ### 5.2 Available gross profit subject to warmup
 For account `i`:
@@ -207,9 +212,10 @@ Then:
 ### 5.4 Warmup slope update rule (MUST be deterministic)
 After any change that increases `AvailGross_i` (e.g., new profits), and after any conversion:
 - If `AvailGross_i == 0`: `w_slope_i = 0`
-- Else if `T > 0`: `w_slope_i = max(1, floor(AvailGross_i / T))`
-- Else (`T == 0`): `w_slope_i = AvailGross_i`
+- Else: `w_slope_i = floor(AvailGross_i / T)` using the positive effective warmup period from §5.1.
 - Set `w_start_i = current_slot` (unless warmup is explicitly paused by policy; pausing is optional and not required for correctness of this spec).
+
+If `AvailGross_i < T`, `w_slope_i` MAY be zero; in that case the profit remains non-convertible until the full effective warmup period elapses.
 
 **Implementation ordering requirement (MUST):**
 When mark-to-market settlement increases `AvailGross_i` (positive mark PnL added to realized PnL), the engine MUST update the warmup slope **before** invoking profit conversion (`settle_warmup_to_capital`). Otherwise, a stale `cap = w_slope * elapsed` could exceed the originally warming entitlement, allowing overwithdrawal of newly-realized mark profits.
@@ -276,6 +282,12 @@ Funding accrual updates `F_global` over time according to a per-slot funding rat
 
 - `ΔF = Σ (P_t * r_t / 10_000)` over slots, expressed in **quote per 1 base** and scaled by `1e6` consistently with `price`.
 
+The engine MUST validate funding rates before storing or accruing them:
+- `abs(r_t) ≤ max_funding_rate_bps_per_slot`
+- the implementation MUST use a panic-free absolute-value check for the full signed integer domain.
+
+The wrapper MUST derive the funding rate from authenticated oracle/mark/premium data or another protocol policy source. Permissionless callers MUST NOT be able to persist arbitrary unbounded funding rates.
+
 **Anti-retroactivity (MUST):** If `r_t` is computed from mutable engine state (e.g., LP inventory imbalance, OI, utilization), then state at slot `t1` MUST NOT affect funding charged for slots `< t1`.  
 In particular, an adversary MUST NOT be able to delay a permissionless crank, change the state just before the crank, and cause the new rate to be applied retroactively to the entire elapsed period since `last_funding_slot`.
 
@@ -289,7 +301,8 @@ Maintain in global state:
 - `funding_rate_bps_per_slot_last: i64` — the rate that was in effect starting at `last_funding_slot`.
 
 Define `accrue_funding_to(s)` (where `s = current_slot`) as:
-- `dt = s - last_funding_slot` (saturating)
+- require `s ≥ last_funding_slot`
+- `dt = s - last_funding_slot`
 - `ΔF = price_sample(s) * funding_rate_bps_per_slot_last * dt / 10_000`
 - `F_global += ΔF`
 - `last_funding_slot = s`
@@ -394,6 +407,7 @@ Liquidation MAY be full or partial. Any liquidation MUST:
    - profit conversion (§6.2) (recommended)
    - fee-debt sweep (§6.3)
 3. Charge liquidation fee from protected principal to insurance (§8.1).
+4. If any position remains after the fee, the account MUST still satisfy maintenance margin at the liquidation oracle; otherwise the liquidation MUST close the full remaining position.
 
 **No global scans are permitted or required.**  
 The system remains live regardless of `OI_tot`.
@@ -406,13 +420,15 @@ The system remains live regardless of `OI_tot`.
 Canonical settle routine used by all user ops.
 
 MUST perform, in this exact order:
-1. Set `current_slot = now_slot`.
+1. Require `now_slot ≥ current_slot`, then set `current_slot = now_slot`.
 2. If funding is supported: accrue the global funding index to `current_slot` per §7.1 (e.g., `accrue_funding_to(current_slot)`), then settle funding into `PNL_i` (§7.2).
 3. Settle mark-to-oracle into `PNL_i` and set `entry_i = oracle_price` (§7.3).
 4. Charge fees/maintenance due (§8.2) (may create/extend fee debt).
 5. Settle losses immediately (§6.1).
 6. Convert warmable profits to principal (§6.2).
 7. Sweep fee debt from any newly available principal (§6.3).
+
+**Staleness configuration:** `max_crank_staleness_slots` MUST be strictly smaller than `warmup_period_slots`. Implementations SHOULD reject or sanitize larger values to `warmup_period_slots - 1`, so a single accepted future slot cannot mature a full warmup cohort.
 
 ### 10.2 `deposit(i, amount)`
 Preconditions:
@@ -444,6 +460,8 @@ Effects:
 Preconditions:
 - For any **risk-increasing** trade (increases `|pos|` for either party), freshness gating SHOULD be enforced.
 - Bounds: `oracle_price`, `exec_price`, and `size` MUST satisfy §1.3.
+- `abs(exec_price - oracle_price) * 10_000 / oracle_price ≤ max_exec_deviation_bps`.
+- The wrapper MUST additionally enforce the user's signed limit price / slippage tolerance. The engine-level deviation bound is only a protocol backstop against pathological matcher output.
 
 Procedure:
 1. `touch_account_full(a, oracle_price, now_slot)`
@@ -480,6 +498,16 @@ A crank MAY:
 
 **Correctness MUST NOT depend on “OI==0” recovery or admin intervention.**  
 The haircut ratio `h` ensures continuous solvency of junior profits with no global scanning, and the crank ensures non-interactive progress of warmup conversion.
+
+### 10.6 Wrapper trust-boundary requirements
+The engine is an accounting/risk library. It MUST NOT be treated as a complete Solana custody program by itself. A safe wrapper MUST enforce:
+
+- **Token parity:** every deposit, account-fee payment, fee-credit deposit, and insurance top-up MUST transfer exactly the same token amount into the vault in the same transaction; every successful withdrawal MUST transfer exactly the returned amount out, and failed engine calls MUST transfer nothing.
+- **Signer mapping:** `withdraw`, user-side `execute_trade`, `close_account`, `deposit_fee_credits`, and `deposit` MUST be authorized by the account owner or by stricter protocol policy. `set_owner` MUST be authorized by the current owner; for an unowned freshly-created account, the authenticated caller MUST equal the first owner being installed. LP creation/management and protocol parameters MUST follow protocol admin policy.
+- **Oracle authenticity:** every `oracle_price` MUST come from an authenticated, fresh, manipulation-resistant oracle path; users and LPs MUST NOT supply arbitrary prices.
+- **Funding rate:** every supplied funding rate MUST be derived from authenticated protocol state/policy and bounded by `max_funding_rate_bps_per_slot`; permissionless callers MUST NOT persist arbitrary rates.
+- **Matcher boundary:** wrappers MUST treat matcher programs as untrusted, enforce user limit/slippage policy, and hold the engine account write-locked so matcher CPI cannot re-enter another instruction mutating the same engine state.
+- **Clock and layout:** `now_slot` MUST be the real monotonic Clock slot. The engine account MUST be program-owned, freshly zeroed before `init_in_place`, initialized exactly once, and never cast from foreign/untrusted bytes.
 
 ---
 
@@ -591,4 +619,3 @@ When modifying this spec, ensure:
 - [ ] Code changes identified in implementation
 - [ ] Tests updated to cover new/changed behavior
 - [ ] Kani proofs reviewed for affected invariants
-

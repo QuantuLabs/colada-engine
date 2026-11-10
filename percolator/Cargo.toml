@@ -1,0 +1,25 @@
+# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
+[package]
+name = "colada"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "colada"
+path = "src/colada.rs"
+
+[dependencies]
+# No runtime dependencies - pure no_std compatible library
+
+[dev-dependencies]
+proptest = "1.4"
+
+[features]
+default = []
+test = []  # Use MAX_ACCOUNTS=64 for tests
+fuzz = []  # Enable fuzzing tests
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

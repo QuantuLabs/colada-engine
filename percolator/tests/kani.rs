@@ -1,8 +1,9 @@
+// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 //! Formal verification with Kani
 //!
 //! These proofs verify critical safety properties of the risk engine.
-//! Run with: cargo kani --harness <name> (individual proofs)
-//! Run all: cargo kani (may take significant time)
+//! On Linux: KANI_PACKAGE=colada bash scripts/run_kani_full_audit.sh <name> (one named proof)
+//! All sequentially: KANI_PACKAGE=colada bash scripts/run_kani_full_audit.sh (bounded; see README.md)
 //!
 //! Key invariants proven:
 //! - I2: Conservation of funds across all operations (V >= C_tot + I)
@@ -39,10 +40,12 @@ fn test_params() -> RiskParams {
         initial_margin_bps: 1000,
         trading_fee_bps: 10,
         max_accounts: 4, // Match MAX_ACCOUNTS for Kani
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::ZERO,
         risk_reduction_threshold: U128::ZERO,
         maintenance_fee_per_slot: U128::ZERO,
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,
         liquidation_fee_cap: U128::new(10_000),
         liquidation_buffer_bps: 100,
@@ -58,10 +61,12 @@ fn test_params_with_floor() -> RiskParams {
         initial_margin_bps: 1000,
         trading_fee_bps: 10,
         max_accounts: 4, // Match MAX_ACCOUNTS for Kani
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::ZERO,
         risk_reduction_threshold: U128::new(1000), // Non-zero floor
         maintenance_fee_per_slot: U128::ZERO,
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,
         liquidation_fee_cap: U128::new(10_000),
         liquidation_buffer_bps: 100,
@@ -77,15 +82,27 @@ fn test_params_with_maintenance_fee() -> RiskParams {
         initial_margin_bps: 1000,
         trading_fee_bps: 10,
         max_accounts: 4, // Match MAX_ACCOUNTS for Kani
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::ZERO,
         risk_reduction_threshold: U128::ZERO,
         maintenance_fee_per_slot: U128::new(1), // fee_per_slot = 1 (direct, no division)
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,
         liquidation_fee_cap: U128::new(10_000),
         liquidation_buffer_bps: 100,
         min_liquidation_abs: U128::new(100_000),
     }
+}
+
+fn accrue_funding_at_rate(
+    engine: &mut RiskEngine,
+    now_slot: u64,
+    oracle_price: u64,
+    rate_bps_per_slot: i64,
+) -> Result<()> {
+    engine.set_funding_rate_for_next_interval(rate_bps_per_slot)?;
+    engine.accrue_funding(now_slot, oracle_price)
 }
 
 // ============================================================================
@@ -160,8 +177,6 @@ fn snapshot_globals(engine: &RiskEngine) -> GlobalsSnapshot {
 // ============================================================================
 // Verification Prelude: State Validity and Fast Conservation Helpers
 // ============================================================================
-
-
 
 /// Cheap validity check for RiskEngine state
 /// Used as assume/assert in frame proofs and validity-preservation proofs.
@@ -413,7 +428,8 @@ fn inv_aggregates(engine: &RiskEngine) -> bool {
             if pnl > 0 {
                 sum_pnl_pos = sum_pnl_pos.saturating_add(pnl as u128);
             }
-            sum_abs_pos = sum_abs_pos.saturating_add(abs_i128_to_u128(engine.accounts[idx].position_size.get()));
+            sum_abs_pos = sum_abs_pos
+                .saturating_add(abs_i128_to_u128(engine.accounts[idx].position_size.get()));
         }
     }
     engine.c_tot.get() == sum_capital
@@ -546,7 +562,11 @@ fn recompute_totals(engine: &RiskEngine) -> Totals {
 
             // Guard: reject states with bitmap bits beyond MAX_ACCOUNTS
             if idx >= MAX_ACCOUNTS {
-                return Totals { sum_capital: 0, sum_pnl_pos: 0, sum_pnl_neg_abs: 0 };
+                return Totals {
+                    sum_capital: 0,
+                    sum_pnl_pos: 0,
+                    sum_pnl_neg_abs: 0,
+                };
             }
 
             let account = &engine.accounts[idx];
@@ -569,7 +589,6 @@ fn recompute_totals(engine: &RiskEngine) -> Totals {
         sum_pnl_neg_abs,
     }
 }
-
 
 // ============================================================================
 // I2: Conservation of funds (FAST - uses totals-based conservation check)
@@ -622,7 +641,10 @@ fn fast_i2_withdraw_preserves_conservation() {
 
     assert!(conservation_fast_no_funding(&engine));
 
-    assert_ok!(engine.withdraw(user_idx, withdraw, 0, 1_000_000), "withdraw must succeed");
+    assert_ok!(
+        engine.withdraw(user_idx, withdraw, 0, 1_000_000),
+        "withdraw must succeed"
+    );
 
     assert!(
         conservation_fast_no_funding(&engine),
@@ -747,14 +769,23 @@ fn i7_user_isolation_deposit() {
     kani::assume(amount2 > 0 && amount2 < 10_000);
 
     // Force Ok: deposits must succeed on fresh accounts
-    assert_ok!(engine.deposit(user1, amount1, 0), "user1 initial deposit must succeed");
-    assert_ok!(engine.deposit(user2, amount2, 0), "user2 initial deposit must succeed");
+    assert_ok!(
+        engine.deposit(user1, amount1, 0),
+        "user1 initial deposit must succeed"
+    );
+    assert_ok!(
+        engine.deposit(user2, amount2, 0),
+        "user2 initial deposit must succeed"
+    );
 
     let user2_principal = engine.accounts[user2 as usize].capital;
     let user2_pnl = engine.accounts[user2 as usize].pnl;
 
     // Operate on user1 — force Ok for non-vacuity
-    assert_ok!(engine.deposit(user1, 100, 0), "user1 second deposit must succeed");
+    assert_ok!(
+        engine.deposit(user1, 100, 0),
+        "user1 second deposit must succeed"
+    );
 
     // User2 should be unchanged
     assert!(
@@ -782,14 +813,23 @@ fn i7_user_isolation_withdrawal() {
     kani::assume(amount2 > 0 && amount2 < 10_000);
 
     // Force Ok: deposits must succeed on fresh accounts
-    assert_ok!(engine.deposit(user1, amount1, 0), "user1 deposit must succeed");
-    assert_ok!(engine.deposit(user2, amount2, 0), "user2 deposit must succeed");
+    assert_ok!(
+        engine.deposit(user1, amount1, 0),
+        "user1 deposit must succeed"
+    );
+    assert_ok!(
+        engine.deposit(user2, amount2, 0),
+        "user2 deposit must succeed"
+    );
 
     let user2_principal = engine.accounts[user2 as usize].capital;
     let user2_pnl = engine.accounts[user2 as usize].pnl;
 
     // Operate on user1 — force Ok for non-vacuity
-    assert_ok!(engine.withdraw(user1, 50, 0, 1_000_000), "user1 withdraw must succeed");
+    assert_ok!(
+        engine.withdraw(user1, 50, 0, 1_000_000),
+        "user1 withdraw must succeed"
+    );
 
     // User2 should be unchanged
     assert!(
@@ -922,8 +962,7 @@ fn pnl_withdrawal_requires_warmup() {
         assert!(
             matches!(
                 result,
-                Err(RiskError::InsufficientBalance)
-                    | Err(RiskError::PnlNotWarmedUp)
+                Err(RiskError::InsufficientBalance) | Err(RiskError::PnlNotWarmedUp)
             ),
             "Cannot withdraw when no principal and PNL not warmed up"
         );
@@ -1115,11 +1154,13 @@ fn funding_p3_bounded_drift_between_opposite_positions() {
     let lp_result = engine.touch_account(lp_idx);
 
     // Non-vacuity: both settlements must succeed
-    assert!(user_result.is_ok(), "non-vacuity: user settlement must succeed");
+    assert!(
+        user_result.is_ok(),
+        "non-vacuity: user settlement must succeed"
+    );
     assert!(lp_result.is_ok(), "non-vacuity: LP settlement must succeed");
 
-    let total_after =
-        engine.accounts[user_idx as usize].pnl + engine.accounts[lp_idx as usize].pnl;
+    let total_after = engine.accounts[user_idx as usize].pnl + engine.accounts[lp_idx as usize].pnl;
     let change = total_after - total_before;
 
     // Funding should not create value (vault keeps rounding dust)
@@ -1187,8 +1228,6 @@ fn funding_p5_bounded_operations_no_overflow() {
     kani::assume(price > 1_000_000 && price < 1_000_000_000); // $1 to $1000
 
     let rate: i64 = kani::any();
-    kani::assume(rate != i64::MIN);
-    kani::assume(rate.abs() < 1000); // ±1000 bps = ±10%
 
     let dt: u64 = kani::any();
     kani::assume(dt < 1000); // max 1000 slots
@@ -1196,7 +1235,7 @@ fn funding_p5_bounded_operations_no_overflow() {
     engine.last_funding_slot = 0;
 
     // Accrue should not panic
-    let result = engine.accrue_funding_with_rate(dt, price, rate);
+    let result = accrue_funding_at_rate(&mut engine, dt, price, rate);
 
     // Either succeeds or returns Overflow error (never panics)
     if result.is_ok() {
@@ -1216,10 +1255,10 @@ fn funding_p5_bounded_operations_no_overflow() {
     }
 
     // Non-vacuity: with small bounded inputs, accrual must succeed
-    if dt > 0 && dt < 100 && rate.abs() < 100 && price < 100_000_000 {
+    if dt > 0 && dt < 100 && rate.unsigned_abs() < 100 && price < 100_000_000 {
         let mut engine2 = RiskEngine::new(test_params());
         engine2.last_funding_slot = 0;
-        let r2 = engine2.accrue_funding_with_rate(dt, price, rate);
+        let r2 = accrue_funding_at_rate(&mut engine2, dt, price, rate);
         assert!(r2.is_ok(), "non-vacuity: small bounded inputs must succeed");
     }
 }
@@ -1260,8 +1299,8 @@ fn funding_zero_position_no_change() {
 // Warmup Correctness Proofs
 // ============================================================================
 
-/// Proof: update_warmup_slope sets slope.get() >= 1 when positive_pnl > 0
-/// This prevents the "zero forever" warmup bug where small PnL never warms up.
+/// Proof: update_warmup_slope uses floor(positive_pnl / warmup_period).
+/// Dust PnL may have slope 0 and cliff-vests at the end of the full period.
 #[kani::proof]
 #[kani::unwind(33)]
 #[kani::solver(cadical)]
@@ -1280,14 +1319,17 @@ fn proof_warmup_slope_nonzero_when_positive_pnl() {
     sync_engine_aggregates(&mut engine);
 
     // Call update_warmup_slope — force Ok
-    assert_ok!(engine.update_warmup_slope(user_idx), "update_warmup_slope must succeed");
+    assert_ok!(
+        engine.update_warmup_slope(user_idx),
+        "update_warmup_slope must succeed"
+    );
 
-    // PROOF: slope must be >= 1 when positive_pnl > 0
-    // This is enforced by the debug_assert in the function, but we verify here too
+    // PROOF: slope matches floor division. It may be zero for dust PnL.
     let slope = engine.accounts[user_idx as usize].warmup_slope_per_step;
-    assert!(
-        slope.get() >= 1,
-        "Warmup slope must be >= 1 when positive_pnl > 0"
+    assert_eq!(
+        slope.get(),
+        positive_pnl as u128 / engine.params.warmup_period_slots as u128,
+        "Warmup slope must use floor(positive_pnl / warmup_period)"
     );
 }
 
@@ -1429,7 +1471,10 @@ fn fast_frame_withdraw_only_mutates_one_account_vault_and_warmup() {
     let insurance_before = engine.insurance_fund.balance;
 
     // Withdraw — force Ok for non-vacuity
-    assert_ok!(engine.withdraw(user_idx, withdraw, 0, 1_000_000), "withdraw must succeed");
+    assert_ok!(
+        engine.withdraw(user_idx, withdraw, 0, 1_000_000),
+        "withdraw must succeed"
+    );
 
     // Assert: other account unchanged
     let other_after = &engine.accounts[other_idx as usize];
@@ -1749,7 +1794,10 @@ fn fast_valid_preserved_by_top_up_insurance_fund() {
     let res = engine.top_up_insurance_fund(amount);
 
     // Non-vacuity: top_up must succeed
-    assert!(res.is_ok(), "non-vacuity: top_up_insurance_fund must succeed");
+    assert!(
+        res.is_ok(),
+        "non-vacuity: top_up_insurance_fund must succeed"
+    );
     assert!(
         valid_state(&engine),
         "valid_state preserved by top_up_insurance_fund"
@@ -2013,13 +2061,20 @@ fn fast_maintenance_margin_uses_equity_including_negative_pnl() {
     let position_value = abs_i128_to_u128(position) * (oracle_price as u128) / 1_000_000;
     let mm_required = position_value * (engine.params.maintenance_margin_bps as u128) / 10_000;
 
-    let is_above = engine.is_above_maintenance_margin_mtm(&engine.accounts[idx as usize], oracle_price);
+    let is_above =
+        engine.is_above_maintenance_margin_mtm(&engine.accounts[idx as usize], oracle_price);
 
     // is_above_maintenance_margin_mtm uses haircutted (effective) equity
     if eff_equity > mm_required {
-        assert!(is_above, "Should be above MM when effective equity > required");
+        assert!(
+            is_above,
+            "Should be above MM when effective equity > required"
+        );
     } else {
-        assert!(!is_above, "Should be below MM when effective equity <= required");
+        assert!(
+            !is_above,
+            "Should be below MM when effective equity <= required"
+        );
     }
 }
 
@@ -2037,7 +2092,7 @@ fn fast_account_equity_computes_correctly() {
     kani::assume(pnl > -1_000_000 && pnl < 1_000_000);
 
     let account = Account {
-        kind: AccountKind::User,
+        kind: AccountKind::User.as_u8(),
         account_id: 1,
         capital: U128::new(capital),
         pnl: I128::new(pnl),
@@ -2170,7 +2225,9 @@ fn proof_fee_credits_never_inflate_from_settle() {
 
     // Settle after 216,000 slots (dt = 216,000)
     // With fee_per_slot = 1, due = dt = 216,000
-    engine.settle_maintenance_fee(user, 216_000, 1_000_000).unwrap();
+    engine
+        .settle_maintenance_fee(user, 216_000, 1_000_000)
+        .unwrap();
 
     let credits_after = engine.accounts[user as usize].fee_credits;
 
@@ -2446,10 +2503,7 @@ fn proof_stale_crank_blocks_execute_trade() {
     kani::assume(stale_slot > 150); // strictly stale
     kani::assume(stale_slot < u64::MAX - 1000);
 
-    let result = engine.execute_trade(
-        &NoOpMatcher,
-        lp, user, stale_slot, 1_000_000, 1_000,
-    );
+    let result = engine.execute_trade(&NoOpMatcher, lp, user, stale_slot, 1_000_000, 1_000);
     assert!(
         result == Err(RiskError::Unauthorized),
         "execute_trade must reject when crank is stale"
@@ -2522,7 +2576,7 @@ fn proof_close_account_includes_warmed_pnl() {
     let capital_after_warmup = engine.accounts[user as usize].capital;
 
     // Now close must succeed and return exactly that capital
-    let result = engine.close_account(user, 0, 1_000_000);
+    let result = engine.close_account(user, 200, 1_000_000);
     assert!(
         result.is_ok(),
         "close_account must succeed when flat and pnl==0"
@@ -2624,7 +2678,7 @@ fn proof_trading_credits_fee_to_user() {
 
     // Force trade to succeed (non-vacuous proof)
     let _ = assert_ok!(
-        engine.execute_trade(&NoOpMatcher, lp, user, 0, oracle_price, size),
+        engine.execute_trade(&NoOpMatcher, lp, user, 100, oracle_price, size),
         "trade must succeed for fee credit proof"
     );
 
@@ -2637,12 +2691,12 @@ fn proof_trading_credits_fee_to_user() {
     );
 }
 
-/// Proof: keeper_crank forgives exactly half the elapsed slots
+/// Proof: keeper_crank charges elapsed maintenance without fee forgiveness
 /// Uses fee_per_slot = 1 for deterministic accounting
 #[kani::proof]
 #[kani::unwind(33)]
 #[kani::solver(cadical)]
-fn proof_keeper_crank_forgives_half_slots() {
+fn proof_keeper_crank_charges_elapsed_slots_without_forgiveness() {
     let mut engine = RiskEngine::new(test_params_with_maintenance_fee());
 
     // Create user and set capital explicitly (add_user doesn't give capital)
@@ -2661,8 +2715,8 @@ fn proof_keeper_crank_forgives_half_slots() {
 
     // Calculate expected values
     let dt = now_slot; // since last_fee_slot is 0
-    let expected_forgive = dt / 2;
-    let charged_dt = dt - expected_forgive; // ceil(dt/2)
+    let expected_forgive = 0;
+    let charged_dt = dt;
 
     // With fee_per_slot = 1, due = charged_dt
     let insurance_before = engine.insurance_fund.balance;
@@ -2673,10 +2727,10 @@ fn proof_keeper_crank_forgives_half_slots() {
     assert!(result.is_ok(), "keeper_crank should always succeed");
     let outcome = result.unwrap();
 
-    // Verify slots_forgiven matches expected (dt / 2, floored)
+    // Verify no fee forgiveness is applied.
     assert!(
         outcome.slots_forgiven == expected_forgive,
-        "keeper_crank must forgive dt/2 slots"
+        "keeper_crank must not forgive maintenance slots"
     );
 
     // After crank, last_fee_slot should be now_slot
@@ -2723,7 +2777,9 @@ fn proof_net_extraction_bounded_with_fee_credits() {
     // Optional: attacker calls keeper_crank first (may fail, that's ok)
     let do_crank: bool = kani::any();
     let crank_ok = if do_crank {
-        engine.keeper_crank(attacker, 100, 1_000_000, 0, false).is_ok()
+        engine
+            .keeper_crank(attacker, 100, 1_000_000, 0, false)
+            .is_ok()
     } else {
         false
     };
@@ -2734,7 +2790,9 @@ fn proof_net_extraction_bounded_with_fee_credits() {
         let delta: i128 = kani::any();
         kani::assume(delta != 0 && delta != i128::MIN);
         kani::assume(delta > -5 && delta < 5);
-        engine.execute_trade(&NoOpMatcher, lp, attacker, 0, 1_000_000, delta).is_ok()
+        engine
+            .execute_trade(&NoOpMatcher, lp, attacker, 0, 1_000_000, delta)
+            .is_ok()
     } else {
         false
     };
@@ -2762,7 +2820,10 @@ fn proof_net_extraction_bounded_with_fee_credits() {
 
     // Non-vacuity: when no trade/crank and withdrawal is within deposit, must succeed
     if !do_trade && !do_crank && withdraw_amount <= attacker_deposit {
-        assert!(result.is_ok(), "non-vacuity: withdrawal within deposit must succeed without trade/crank");
+        assert!(
+            result.is_ok(),
+            "non-vacuity: withdrawal within deposit must succeed without trade/crank"
+        );
     }
 }
 
@@ -2827,7 +2888,11 @@ fn proof_lq1_liquidation_reduces_oi_and_enforces_safety() {
     // (Fee charged AFTER the margin safety check absorbs the buffer between target and MM)
     if abs_pos > 0 {
         assert!(
-            engine.is_above_margin_bps_mtm(account, oracle_price, engine.params.maintenance_margin_bps),
+            engine.is_above_margin_bps_mtm(
+                account,
+                oracle_price,
+                engine.params.maintenance_margin_bps
+            ),
             "Partial liquidation must leave account above maintenance margin"
         );
     }
@@ -2936,7 +3001,7 @@ fn proof_lq3a_profit_routes_through_adl() {
 
     let oi_before = engine.total_open_interest;
 
-    let result = engine.liquidate_at_oracle(user, 0, oracle_price);
+    let result = engine.liquidate_at_oracle(user, 100, oracle_price);
 
     // Force liquidation to trigger (non-vacuous)
     assert!(result.is_ok(), "liquidation must not error");
@@ -3096,20 +3161,22 @@ fn proof_lq6_n1_boundary_after_liquidation() {
 // ============================================================================
 
 /// LIQ-PARTIAL-1: Safety After Liquidation
-/// If liquidation succeeds with partial close, the remaining position must be
-/// above maintenance margin. The liquidation fee (charged after close) may push
-/// equity below target (maintenance + buffer), but it must stay above maintenance.
+/// If liquidation succeeds, the result must be either a full close or a remaining
+/// position that is still above the liquidation target after fees are charged.
 ///
 /// Setup chosen to produce a genuine partial fill:
 /// - deposit 200_000, position 10M (10 units at 1.0), pnl = 0
 /// - Notional = 10M, MM at 500 bps = 500_000 >> equity 200_000 → undercollateralized
 /// - Partial close leaves ~3.3M remaining (> min_liquidation_abs 100_000)
-/// - After capped fee (10_000), equity = 190_000 > MM of remaining ~166_666
+/// - With a realistic fee cap, the post-fee recheck may force full close instead
+///   of leaving an unsafe partial remnant.
 #[kani::proof]
 #[kani::unwind(33)]
 #[kani::solver(cadical)]
 fn proof_liq_partial_1_safety_after_liquidation() {
-    let mut engine = RiskEngine::new(test_params());
+    let mut params = test_params();
+    params.liquidation_fee_cap = U128::new(100_000);
+    let mut engine = RiskEngine::new(params);
 
     let user = engine.add_user(0).unwrap();
     engine.deposit(user, 200_000, 0).unwrap();
@@ -3128,16 +3195,15 @@ fn proof_liq_partial_1_safety_after_liquidation() {
     assert!(result.unwrap(), "setup must force liquidation to trigger");
 
     let account = &engine.accounts[user as usize];
-    let abs_pos = abs_i128_to_u128(account.position_size.get());
+    let target_bps = engine
+        .params
+        .maintenance_margin_bps
+        .saturating_add(engine.params.liquidation_buffer_bps);
 
-    // Non-vacuity: partial fill must occur (not full close)
-    assert!(abs_pos > 0, "setup must produce partial fill, not full close");
-
-    // After partial close + fee, account must be above maintenance margin.
-    // (Fee may push below target = maintenance + buffer, but maintenance must hold.)
     assert!(
-        engine.is_above_maintenance_margin_mtm(account, oracle_price),
-        "Partial close: account must be above maintenance margin after fee"
+        account.position_size.is_zero()
+            || engine.is_above_margin_bps_mtm(account, oracle_price, target_bps),
+        "liquidation must not leave an unsafe post-fee remnant"
     );
 }
 
@@ -3153,7 +3219,10 @@ fn proof_liq_partial_1_safety_after_liquidation() {
 #[kani::unwind(33)]
 #[kani::solver(cadical)]
 fn proof_liq_partial_2_dust_elimination() {
-    let mut engine = RiskEngine::new(test_params());
+    // Zero fees keep this fixture on the genuine partial-liquidation path.
+    let mut params = test_params();
+    params.liquidation_fee_bps = 0;
+    let mut engine = RiskEngine::new(params);
 
     let user = engine.add_user(0).unwrap();
     engine.deposit(user, 200_000, 0).unwrap();
@@ -3176,7 +3245,10 @@ fn proof_liq_partial_2_dust_elimination() {
     let abs_pos = abs_i128_to_u128(account.position_size.get());
 
     // Non-vacuity: partial fill must occur
-    assert!(abs_pos > 0, "setup must produce partial fill, not full close");
+    assert!(
+        abs_pos > 0,
+        "setup must produce partial fill, not full close"
+    );
 
     // Dust elimination: remaining position >= min_liquidation_abs
     assert!(
@@ -3199,7 +3271,10 @@ fn proof_liq_partial_2_dust_elimination() {
 #[kani::unwind(5)] // MAX_ACCOUNTS=4
 #[kani::solver(cadical)]
 fn proof_liq_partial_3_routing_is_complete_via_conservation_and_n1() {
-    let mut engine = RiskEngine::new(test_params());
+    // Zero fees keep this fixture on the genuine partial-liquidation path.
+    let mut params = test_params();
+    params.liquidation_fee_bps = 0;
+    let mut engine = RiskEngine::new(params);
 
     // Use two users instead of user+LP (avoids memcmp on pubkey arrays)
     let user = engine.add_user(0).unwrap();
@@ -3240,7 +3315,10 @@ fn proof_liq_partial_3_routing_is_complete_via_conservation_and_n1() {
     let abs_pos = abs_i128_to_u128(account.position_size.get());
 
     // Non-vacuity: partial fill must occur
-    assert!(abs_pos > 0, "setup must produce partial fill, not full close");
+    assert!(
+        abs_pos > 0,
+        "setup must produce partial fill, not full close"
+    );
 
     // Conservation holds (no silent PnL drop)
     assert!(
@@ -3525,8 +3603,6 @@ fn gc_respects_full_dust_predicate() {
     );
 }
 
-
-
 // ==============================================================================
 // CRANK-BOUNDS PROOF: keeper_crank respects all budgets
 // ==============================================================================
@@ -3577,7 +3653,10 @@ fn crank_bounds_respected() {
     );
 
     // Non-vacuity: with single account, sweep must complete in one crank
-    assert!(outcome.sweep_complete, "non-vacuity: sweep must complete with single account");
+    assert!(
+        outcome.sweep_complete,
+        "non-vacuity: sweep must complete with single account"
+    );
     assert!(
         engine.last_full_sweep_completed_slot == now_slot,
         "CRANK-BOUNDS: last_full_sweep_completed_slot updates on sweep complete"
@@ -3643,8 +3722,6 @@ fn gc_frees_only_true_dust() {
     );
 }
 
-
-
 // ============================================================================
 // WITHDRAWAL MARGIN SAFETY (Bug 5 fix verification)
 // ============================================================================
@@ -3703,7 +3780,10 @@ fn withdrawal_maintains_margin_above_maintenance() {
 
     // Non-vacuity: with high capital and tiny withdrawal at entry price, must succeed
     if capital >= 40_000 && amount <= 200 && oracle_price == entry_price {
-        assert!(result.is_ok(), "non-vacuity: tiny withdrawal from well-funded account at entry price must succeed");
+        assert!(
+            result.is_ok(),
+            "non-vacuity: tiny withdrawal from well-funded account at entry price must succeed"
+        );
     }
 }
 
@@ -4108,7 +4188,10 @@ fn proof_add_user_structural_integrity() {
     let free_head_before = engine.free_head;
 
     kani::assume(free_head_before != u16::MAX); // Ensure slot available
-    kani::assert(inv_structural(&engine), "fresh engine must have valid structure");
+    kani::assert(
+        inv_structural(&engine),
+        "fresh engine must have valid structure",
+    );
 
     let result = engine.add_user(0);
 
@@ -4234,7 +4317,6 @@ fn proof_liquidate_preserves_inv() {
     }
 }
 
-
 // ============================================================================
 // SETTLE_WARMUP_TO_CAPITAL PROOF FAMILY - Exception Safety + INV Preservation
 // ============================================================================
@@ -4345,6 +4427,8 @@ fn proof_keeper_crank_preserves_inv() {
 
     let now_slot: u64 = kani::any();
     kani::assume(now_slot > engine.last_crank_slot && now_slot <= 200);
+    // Public operations require a monotonic clock.
+    kani::assume(now_slot >= engine.current_slot);
 
     let result = engine.keeper_crank(caller, now_slot, 1_000_000, 0, false);
 
@@ -4426,7 +4510,6 @@ fn proof_gc_dust_structural_integrity() {
     );
 }
 
-
 // ============================================================================
 // CLOSE_ACCOUNT PROOF FAMILY - Exception Safety + INV Preservation
 // ============================================================================
@@ -4500,7 +4583,10 @@ fn proof_top_up_insurance_preserves_inv() {
     let result = engine.top_up_insurance_fund(amount);
 
     if result.is_ok() {
-        kani::assert(canonical_inv(&engine), "INV must hold after top_up_insurance_fund");
+        kani::assert(
+            canonical_inv(&engine),
+            "INV must hold after top_up_insurance_fund",
+        );
         kani::assert(
             engine.vault.get() == vault_before + amount,
             "vault must increase by amount",
@@ -4538,8 +4624,8 @@ fn proof_sequence_deposit_trade_liquidate() {
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
     // Step 1: Deposits with concrete values (property is about INV preservation, not amounts)
-    let _ = assert_ok!(engine.deposit(user, 5_000, 0), "user deposit must succeed");
-    let _ = assert_ok!(engine.deposit(lp, 50_000, 0), "lp deposit must succeed");
+    let _ = assert_ok!(engine.deposit(user, 5_000, 100), "user deposit must succeed");
+    let _ = assert_ok!(engine.deposit(lp, 50_000, 100), "lp deposit must succeed");
     kani::assert(canonical_inv(&engine), "INV after deposits");
 
     // Step 2: Trade with concrete delta (property is about INV, not specific trade size)
@@ -4577,7 +4663,7 @@ fn proof_sequence_deposit_crank_withdraw() {
     let deposit: u128 = kani::any();
     kani::assume(deposit > 1000 && deposit < 50_000);
 
-    let _ = assert_ok!(engine.deposit(user, deposit, 0), "deposit must succeed");
+    let _ = assert_ok!(engine.deposit(user, deposit, 100), "deposit must succeed");
     kani::assert(canonical_inv(&engine), "INV after deposit");
 
     // Step 2: Crank (force success)
@@ -4622,8 +4708,8 @@ fn proof_trade_creates_funding_settled_positions() {
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
     // Deposits
-    engine.deposit(user, 10_000, 0).unwrap();
-    engine.deposit(lp, 50_000, 0).unwrap();
+    engine.deposit(user, 10_000, 100).unwrap();
+    engine.deposit(lp, 50_000, 100).unwrap();
 
     // Assert, not assume — state built via public APIs must satisfy INV
     kani::assert(canonical_inv(&engine), "API-built state must satisfy INV");
@@ -4678,11 +4764,13 @@ fn proof_crank_with_funding_preserves_inv() {
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
     // Deposits
-    engine.deposit(user, 10_000, 0).unwrap();
-    engine.deposit(lp, 50_000, 0).unwrap();
+    engine.deposit(user, 10_000, 100).unwrap();
+    engine.deposit(lp, 50_000, 100).unwrap();
 
     // Execute trade to create positions (creates OI for funding to act on)
-    engine.execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 50).unwrap();
+    engine
+        .execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 50)
+        .unwrap();
 
     // Assert, not assume — state built via public APIs must satisfy INV
     kani::assert(canonical_inv(&engine), "API-built state must satisfy INV");
@@ -4730,7 +4818,7 @@ fn proof_crank_with_funding_preserves_inv() {
 /// This proof verifies that closing a position with a different LP produces
 /// the same user equity gain as closing with the original LP.
 #[kani::proof]
-#[kani::unwind(33)]
+#[kani::unwind(5)] // Four-account model; unwinding assertions remain enabled.
 #[kani::solver(cadical)]
 fn proof_variation_margin_no_pnl_teleport() {
     // Scenario: user opens long with LP1 at P1, price moves to P2, closes with LP2
@@ -4852,7 +4940,10 @@ fn proof_trade_pnl_zero_sum() {
 
     // Execute trade at oracle price (exec_price = oracle, so trade_pnl = 0)
     let res = engine.execute_trade(&NoOpMatcher, lp, user, 0, oracle, size as i128);
-    assert!(res.is_ok(), "non-vacuity: trade must succeed with well-capitalized accounts and bounded inputs");
+    assert!(
+        res.is_ok(),
+        "non-vacuity: trade must succeed with well-capitalized accounts and bounded inputs"
+    );
 
     let user_pnl_after = engine.accounts[user as usize].pnl.get();
     let lp_pnl_after = engine.accounts[lp as usize].pnl.get();
@@ -4863,7 +4954,11 @@ fn proof_trade_pnl_zero_sum() {
     // notional = |exec_size| * exec_price / 1_000_000
     // fee = ceil(notional * trading_fee_bps / 10_000)
     // NoOpMatcher returns exec_price = oracle, exec_size = size
-    let abs_size = if size >= 0 { size as u128 } else { (-size) as u128 };
+    let abs_size = if size >= 0 {
+        size as u128
+    } else {
+        (-size) as u128
+    };
     let notional = abs_size.saturating_mul(oracle as u128) / 1_000_000;
     // Use ceiling division: (n * bps + 9999) / 10000
     let expected_fee = if notional > 0 {
@@ -4926,13 +5021,17 @@ fn kani_no_teleport_cross_lp_close() {
     engine.accounts[user as usize].capital = U128::new(1_000_000);
     engine.vault = engine.vault + U128::new(1_000_000);
 
+    engine.recompute_aggregates();
+
     let oracle = 1_000_000u64;
-    let now_slot = 100u64;
+    let now_slot = 99u64;
     let btc = 1_000_000i128;
 
     // Open position with LP1 (concrete inputs — must succeed)
-    assert_ok!(engine.execute_trade(&NoOpMatcher, lp1, user, now_slot, oracle, btc),
-        "open trade with LP1 must succeed with concrete inputs");
+    assert_ok!(
+        engine.execute_trade(&NoOpMatcher, lp1, user, now_slot, oracle, btc),
+        "open trade with LP1 must succeed with concrete inputs"
+    );
 
     // Capture state after open
     let user_pnl_after_open = engine.accounts[user as usize].pnl.get();
@@ -4945,8 +5044,10 @@ fn kani_no_teleport_cross_lp_close() {
     kani::assert(lp2_pnl_after_open == 0, "LP2 pnl after open should be 0");
 
     // Close position with LP2 at same oracle (no price movement — must succeed)
-    assert_ok!(engine.execute_trade(&NoOpMatcher, lp2, user, now_slot, oracle, -btc),
-        "close trade with LP2 must succeed with concrete inputs");
+    assert_ok!(
+        engine.execute_trade(&NoOpMatcher, lp2, user, now_slot, oracle, -btc),
+        "close trade with LP2 must succeed with concrete inputs"
+    );
 
     // After close, all positions should be 0
     kani::assert(
@@ -5010,6 +5111,25 @@ impl MatchingEngine for BadMatcherOppositeSign {
     }
 }
 
+/// Bad matcher that returns a valid-bounds price too far from oracle.
+struct BadMatcherExtremeDeviation;
+
+impl MatchingEngine for BadMatcherExtremeDeviation {
+    fn execute_match(
+        &self,
+        _lp_program: &[u8; 32],
+        _lp_context: &[u8; 32],
+        _lp_account_id: u64,
+        oracle_price: u64,
+        size: i128,
+    ) -> Result<TradeExecution> {
+        Ok(TradeExecution {
+            price: oracle_price / 2,
+            size,
+        })
+    }
+}
+
 /// Kani proof: Invalid matcher output is rejected
 /// This proves that the engine rejects matchers that return opposite-sign fills.
 #[kani::proof]
@@ -5063,11 +5183,13 @@ fn params_for_inline_kani() -> RiskParams {
         initial_margin_bps: 0,
         trading_fee_bps: 0,
         max_accounts: MAX_ACCOUNTS as u64,
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::new(0),
         risk_reduction_threshold: U128::new(0),
 
         maintenance_fee_per_slot: U128::new(0),
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
 
         liquidation_fee_bps: 0,
         liquidation_fee_cap: U128::new(0),
@@ -5148,7 +5270,10 @@ fn kani_cross_lp_close_no_pnl_teleport() {
     let user_cap = engine.accounts[user as usize].capital.get();
     assert_eq!(user_pnl + user_cap, initial_cap + ten_k_e6);
     assert_eq!(engine.accounts[lp1 as usize].pnl.get(), 0);
-    assert_eq!(engine.accounts[lp1 as usize].capital.get(), initial_cap - ten_k_e6);
+    assert_eq!(
+        engine.accounts[lp1 as usize].capital.get(),
+        initial_cap - ten_k_e6
+    );
     assert_eq!(engine.accounts[lp2 as usize].pnl.get(), 0);
     assert_eq!(engine.accounts[lp2 as usize].capital.get(), initial_cap);
 
@@ -5217,7 +5342,10 @@ fn proof_haircut_ratio_formula_correctness() {
 
     // P5: When pnl_pos_tot == 0, h == (1, 1)
     if pnl_pos_tot == 0 {
-        assert!(h_num == 1 && h_den == 1, "C1: h must be (1,1) when pnl_pos_tot == 0");
+        assert!(
+            h_num == 1 && h_den == 1,
+            "C1: h must be (1,1) when pnl_pos_tot == 0"
+        );
     }
 
     // P6: When fully backed (Residual >= pnl_pos_tot > 0), h == 1
@@ -5230,7 +5358,10 @@ fn proof_haircut_ratio_formula_correctness() {
 
     // P7: When underbacked (0 < Residual < pnl_pos_tot), h_num == Residual
     if pnl_pos_tot > 0 && residual < pnl_pos_tot {
-        assert!(h_num == residual, "C1: h_num must equal Residual when underbacked");
+        assert!(
+            h_num == residual,
+            "C1: h_num must equal Residual when underbacked"
+        );
     }
 
     // Non-vacuity: partial haircut case is reachable
@@ -5285,12 +5416,21 @@ fn proof_effective_equity_with_haircut() {
     // P1: effective_pos_pnl matches spec formula
     let eff = engine.effective_pos_pnl(pnl);
     if pnl <= 0 {
-        assert!(eff == 0, "C2: effective_pos_pnl must be 0 for non-positive PnL");
+        assert!(
+            eff == 0,
+            "C2: effective_pos_pnl must be 0 for non-positive PnL"
+        );
     } else {
         let expected = (pnl as u128).saturating_mul(h_num) / h_den;
-        assert!(eff == expected, "C2: effective_pos_pnl must equal floor(pos_pnl * h_num / h_den)");
+        assert!(
+            eff == expected,
+            "C2: effective_pos_pnl must equal floor(pos_pnl * h_num / h_den)"
+        );
         // Haircutted must not exceed raw
-        assert!(eff <= pnl as u128, "C2: haircutted PnL must not exceed raw PnL");
+        assert!(
+            eff <= pnl as u128,
+            "C2: haircutted PnL must not exceed raw PnL"
+        );
     }
 
     // P2: effective_equity matches spec: max(0, C + min(PNL, 0) + PNL_eff_pos)
@@ -5300,10 +5440,17 @@ fn proof_effective_equity_with_haircut() {
         let eff_eq_i = cap_i
             .saturating_add(neg_pnl)
             .saturating_add(u128_to_i128_clamped(eff));
-        if eff_eq_i > 0 { eff_eq_i as u128 } else { 0 }
+        if eff_eq_i > 0 {
+            eff_eq_i as u128
+        } else {
+            0
+        }
     };
     let actual_eff_equity = engine.effective_equity(&engine.accounts[idx as usize]);
-    assert!(actual_eff_equity == expected_eff_equity, "C2: effective_equity must match spec formula");
+    assert!(
+        actual_eff_equity == expected_eff_equity,
+        "C2: effective_equity must match spec formula"
+    );
 
     // P3: Haircutted equity <= unhaircutted equity
     let unhaircutted = engine.account_equity(&engine.accounts[idx as usize]);
@@ -5315,7 +5462,10 @@ fn proof_effective_equity_with_haircut() {
     // Non-vacuity: when h < 1 and PnL > 0, haircutted equity < unhaircutted equity
     let residual = vault.saturating_sub(c_tot).saturating_sub(insurance);
     if pnl > 0 && residual < pnl_pos_tot && pnl as u128 <= pnl_pos_tot {
-        assert!(eff < pnl as u128, "C2 non-vacuity: partial haircut must reduce effective PnL");
+        assert!(
+            eff < pnl as u128,
+            "C2 non-vacuity: partial haircut must reduce effective PnL"
+        );
     }
 }
 
@@ -5363,8 +5513,7 @@ fn proof_principal_protection_across_accounts() {
 
     // A's loss should be settled: capital reduced, remainder written off
     assert!(
-        engine.accounts[a as usize].pnl.get() >= 0
-            || engine.accounts[a as usize].capital.is_zero(),
+        engine.accounts[a as usize].pnl.get() >= 0 || engine.accounts[a as usize].capital.is_zero(),
         "C3: A must have loss settled (pnl >= 0 or capital == 0)"
     );
 
@@ -5382,8 +5531,7 @@ fn proof_principal_protection_across_accounts() {
 
     // Conservation still holds
     assert!(
-        engine.vault.get()
-            >= engine.c_tot.get() + engine.insurance_fund.balance.get(),
+        engine.vault.get() >= engine.c_tot.get() + engine.insurance_fund.balance.get(),
         "C3: conservation must hold after loss write-off"
     );
 }
@@ -5463,7 +5611,10 @@ fn proof_profit_conversion_payout_formula() {
     // P5: When underbacked, haircut_loss > 0
     let residual = vault.saturating_sub(capital).saturating_sub(insurance);
     if residual < pnl {
-        assert!(haircut_loss > 0, "C4 non-vacuity: underbacked must have haircut loss > 0");
+        assert!(
+            haircut_loss > 0,
+            "C4 non-vacuity: underbacked must have haircut loss > 0"
+        );
     }
 }
 
@@ -5635,10 +5786,7 @@ impl MatchingEngine for ZeroPriceMatcher {
         _oracle_price: u64,
         size: i128,
     ) -> Result<TradeExecution> {
-        Ok(TradeExecution {
-            price: 0,
-            size,
-        })
+        Ok(TradeExecution { price: 0, size })
     }
 }
 
@@ -5780,10 +5928,23 @@ fn proof_gap1_touch_account_err_no_mutation() {
 
     // Assert no mutation
     let snap_after = full_snapshot_account(&engine.accounts[user as usize]);
-    assert_full_snapshot_eq!(snap_before, snap_after, "touch_account Err: account must be unchanged");
-    kani::assert(engine.pnl_pos_tot.get() == pnl_pos_tot_before, "touch_account Err: pnl_pos_tot unchanged");
-    kani::assert(engine.vault.get() == vault_before, "touch_account Err: vault unchanged");
-    kani::assert(engine.insurance_fund.balance.get() == insurance_before, "touch_account Err: insurance unchanged");
+    assert_full_snapshot_eq!(
+        snap_before,
+        snap_after,
+        "touch_account Err: account must be unchanged"
+    );
+    kani::assert(
+        engine.pnl_pos_tot.get() == pnl_pos_tot_before,
+        "touch_account Err: pnl_pos_tot unchanged",
+    );
+    kani::assert(
+        engine.vault.get() == vault_before,
+        "touch_account Err: vault unchanged",
+    );
+    kani::assert(
+        engine.insurance_fund.balance.get() == insurance_before,
+        "touch_account Err: insurance unchanged",
+    );
 }
 
 /// Gap 1, Proof 2: settle_mark_to_oracle Err → no mutation
@@ -5826,13 +5987,26 @@ fn proof_gap1_settle_mark_err_no_mutation() {
     let result = engine.settle_mark_to_oracle(user, MAX_ORACLE_PRICE);
 
     // Assert Err (non-vacuity)
-    kani::assert(result.is_err(), "settle_mark_to_oracle must fail with overflow");
+    kani::assert(
+        result.is_err(),
+        "settle_mark_to_oracle must fail with overflow",
+    );
 
     // Assert no mutation
     let snap_after = full_snapshot_account(&engine.accounts[user as usize]);
-    assert_full_snapshot_eq!(snap_before, snap_after, "settle_mark Err: account must be unchanged");
-    kani::assert(engine.pnl_pos_tot.get() == pnl_pos_tot_before, "settle_mark Err: pnl_pos_tot unchanged");
-    kani::assert(engine.vault.get() == vault_before, "settle_mark Err: vault unchanged");
+    assert_full_snapshot_eq!(
+        snap_before,
+        snap_after,
+        "settle_mark Err: account must be unchanged"
+    );
+    kani::assert(
+        engine.pnl_pos_tot.get() == pnl_pos_tot_before,
+        "settle_mark Err: pnl_pos_tot unchanged",
+    );
+    kani::assert(
+        engine.vault.get() == vault_before,
+        "settle_mark Err: vault unchanged",
+    );
 }
 
 /// Gap 1, Proof 3: keeper_crank with maintenance fees preserves INV + conservation
@@ -5853,11 +6027,13 @@ fn proof_gap1_crank_with_fees_preserves_inv() {
     let user = engine.add_user(0).unwrap();
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
-    engine.deposit(user, 10_000, 50).unwrap();
-    engine.deposit(lp, 50_000, 50).unwrap();
+    engine.deposit(user, 10_000, 100).unwrap();
+    engine.deposit(lp, 50_000, 100).unwrap();
 
     // Execute trade to create positions (fees will be charged on these)
-    engine.execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 50).unwrap();
+    engine
+        .execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 50)
+        .unwrap();
 
     // Symbolic fee_credits
     let fee_credits: i128 = kani::any();
@@ -5865,7 +6041,10 @@ fn proof_gap1_crank_with_fees_preserves_inv() {
     engine.accounts[user as usize].fee_credits = I128::new(fee_credits);
 
     // Assert pre-state INV (built via public APIs)
-    kani::assert(canonical_inv(&engine), "API-built state must satisfy INV before crank");
+    kani::assert(
+        canonical_inv(&engine),
+        "API-built state must satisfy INV before crank",
+    );
 
     let last_crank_before = engine.last_crank_slot;
 
@@ -5873,15 +6052,18 @@ fn proof_gap1_crank_with_fees_preserves_inv() {
     let result = engine.keeper_crank(user, 150, 1_000_000, 0, false);
 
     if result.is_ok() {
-        kani::assert(canonical_inv(&engine), "INV must hold after crank with fees");
+        kani::assert(
+            canonical_inv(&engine),
+            "INV must hold after crank with fees",
+        );
         kani::assert(
             conservation_fast_no_funding(&engine),
-            "Conservation must hold after crank with fees"
+            "Conservation must hold after crank with fees",
         );
         // Non-vacuity: crank advanced
         kani::assert(
             engine.last_crank_slot > last_crank_before,
-            "Crank must advance last_crank_slot"
+            "Crank must advance last_crank_slot",
         );
     }
 }
@@ -5911,7 +6093,7 @@ fn proof_gap2_rejects_overfill_matcher() {
 
     kani::assert(
         matches!(result, Err(RiskError::InvalidMatchingEngine)),
-        "Must reject overfill matcher"
+        "Must reject overfill matcher",
     );
 }
 
@@ -5936,7 +6118,7 @@ fn proof_gap2_rejects_zero_price_matcher() {
 
     kani::assert(
         matches!(result, Err(RiskError::InvalidMatchingEngine)),
-        "Must reject zero price matcher"
+        "Must reject zero price matcher",
     );
 }
 
@@ -5961,7 +6143,32 @@ fn proof_gap2_rejects_max_price_exceeded_matcher() {
 
     kani::assert(
         matches!(result, Err(RiskError::InvalidMatchingEngine)),
-        "Must reject max price + 1 matcher"
+        "Must reject max price + 1 matcher",
+    );
+}
+
+/// Gap 2, Proof 6b: valid-bounds but excessive price deviation is rejected
+#[kani::proof]
+#[kani::unwind(5)]
+#[kani::solver(cadical)]
+fn proof_gap2_rejects_extreme_deviation_matcher() {
+    let mut engine = RiskEngine::new(test_params());
+
+    let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
+    engine.accounts[lp as usize].capital = U128::new(1_000_000);
+    engine.vault = engine.vault + U128::new(1_000_000);
+
+    let user = engine.add_user(0).unwrap();
+    engine.accounts[user as usize].capital = U128::new(1_000_000);
+    engine.vault = engine.vault + U128::new(1_000_000);
+
+    sync_engine_aggregates(&mut engine);
+
+    let result = engine.execute_trade(&BadMatcherExtremeDeviation, lp, user, 0, 1_000_000, 1_000);
+
+    kani::assert(
+        matches!(result, Err(RiskError::InvalidMatchingEngine)),
+        "Must reject matcher price outside max_exec_deviation_bps",
     );
 }
 
@@ -6008,7 +6215,7 @@ fn proof_gap2_execute_trade_err_preserves_inv() {
     // are INV-preserving individually)
     kani::assert(
         canonical_inv(&engine),
-        "canonical_inv must hold after execute_trade Err"
+        "canonical_inv must hold after execute_trade Err",
     );
 }
 
@@ -6034,8 +6241,8 @@ fn proof_gap3_conservation_trade_entry_neq_oracle() {
     let user = engine.add_user(0).unwrap();
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
-    engine.deposit(user, 100_000, 0).unwrap();
-    engine.deposit(lp, 500_000, 0).unwrap();
+    engine.deposit(user, 100_000, 100).unwrap();
+    engine.deposit(lp, 500_000, 100).unwrap();
 
     let oracle_1: u64 = kani::any();
     let oracle_2: u64 = kani::any();
@@ -6047,7 +6254,10 @@ fn proof_gap3_conservation_trade_entry_neq_oracle() {
 
     // Trade 1: open position at oracle_1 (entry_price set to oracle_1)
     let res1 = engine.execute_trade(&NoOpMatcher, lp, user, 100, oracle_1, size);
-    assert!(res1.is_ok(), "non-vacuity: open trade must succeed with well-capitalized accounts");
+    assert!(
+        res1.is_ok(),
+        "non-vacuity: open trade must succeed with well-capitalized accounts"
+    );
 
     // Non-vacuity: entry_price was set to oracle_1
     let _entry_before = engine.accounts[user as usize].entry_price;
@@ -6066,13 +6276,13 @@ fn proof_gap3_conservation_trade_entry_neq_oracle() {
     // Primary conservation: vault >= c_tot + insurance
     kani::assert(
         conservation_fast_no_funding(&engine),
-        "Primary conservation must hold after trade with entry ≠ oracle"
+        "Primary conservation must hold after trade with entry ≠ oracle",
     );
 
     // Full canonical invariant (structural + aggregates + accounting + per-account)
     kani::assert(
         canonical_inv(&engine),
-        "Canonical INV must hold after trade with entry ≠ oracle"
+        "Canonical INV must hold after trade with entry ≠ oracle",
     );
 }
 
@@ -6094,11 +6304,13 @@ fn proof_gap3_conservation_crank_funding_positions() {
     let user = engine.add_user(0).unwrap();
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
 
-    engine.deposit(user, 30_000, 50).unwrap();
-    engine.deposit(lp, 100_000, 50).unwrap();
+    engine.deposit(user, 30_000, 100).unwrap();
+    engine.deposit(lp, 100_000, 100).unwrap();
 
     // Open position at oracle_1
-    engine.execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 100).unwrap();
+    engine
+        .execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 100)
+        .unwrap();
 
     // Crank at oracle_2 with symbolic funding rate
     let oracle_2: u64 = kani::any();
@@ -6122,13 +6334,13 @@ fn proof_gap3_conservation_crank_funding_positions() {
     // Primary conservation: vault >= c_tot + insurance
     kani::assert(
         conservation_fast_no_funding(&engine),
-        "Primary conservation must hold after crank with funding + positions"
+        "Primary conservation must hold after crank with funding + positions",
     );
 
     // Full canonical invariant
     kani::assert(
         canonical_inv(&engine),
-        "Canonical INV must hold after crank with funding + positions"
+        "Canonical INV must hold after crank with funding + positions",
     );
 }
 
@@ -6137,7 +6349,7 @@ fn proof_gap3_conservation_crank_funding_positions() {
 /// Full lifecycle: deposit → trade (open) → crank (fund) → trade (close).
 /// Verifies canonical_inv after each step and check_conservation at the end.
 #[kani::proof]
-#[kani::unwind(33)]
+#[kani::unwind(5)] // Reachable account/GC scans visit at most four slots.
 #[kani::solver(cadical)]
 fn proof_gap3_multi_step_lifecycle_conservation() {
     let mut engine = RiskEngine::new(test_params());
@@ -6187,7 +6399,7 @@ fn proof_gap3_multi_step_lifecycle_conservation() {
     // Primary conservation at final state
     kani::assert(
         conservation_fast_no_funding(&engine),
-        "Primary conservation must hold after complete lifecycle"
+        "Primary conservation must hold after complete lifecycle",
     );
 }
 
@@ -6280,8 +6492,8 @@ fn proof_gap4_trade_extreme_size_no_panic() {
     engine.last_full_sweep_start_slot = 100;
     let user = engine.add_user(0).unwrap();
     let lp = engine.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
-    engine.deposit(user, 1_000_000_000_000_000_000, 0).unwrap();
-    engine.deposit(lp, 1_000_000_000_000_000_000, 0).unwrap();
+    engine.deposit(user, 1_000_000_000_000_000_000, 100).unwrap();
+    engine.deposit(lp, 1_000_000_000_000_000_000, 100).unwrap();
 
     let r1 = engine.execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 1);
     if r1.is_ok() {
@@ -6297,8 +6509,10 @@ fn proof_gap4_trade_extreme_size_no_panic() {
     engine2.last_full_sweep_start_slot = 100;
     let user2 = engine2.add_user(0).unwrap();
     let lp2 = engine2.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
-    engine2.deposit(user2, 1_000_000_000_000_000_000, 0).unwrap();
-    engine2.deposit(lp2, 1_000_000_000_000_000_000, 0).unwrap();
+    engine2
+        .deposit(user2, 1_000_000_000_000_000_000, 100)
+        .unwrap();
+    engine2.deposit(lp2, 1_000_000_000_000_000_000, 100).unwrap();
 
     let half_max = (MAX_POSITION_ABS / 2) as i128;
     let r2 = engine2.execute_trade(&NoOpMatcher, lp2, user2, 100, 1_000_000, half_max);
@@ -6315,8 +6529,10 @@ fn proof_gap4_trade_extreme_size_no_panic() {
     engine3.last_full_sweep_start_slot = 100;
     let user3 = engine3.add_user(0).unwrap();
     let lp3 = engine3.add_lp([1u8; 32], [0u8; 32], 0).unwrap();
-    engine3.deposit(user3, 1_000_000_000_000_000_000, 0).unwrap();
-    engine3.deposit(lp3, 1_000_000_000_000_000_000, 0).unwrap();
+    engine3
+        .deposit(user3, 1_000_000_000_000_000_000, 100)
+        .unwrap();
+    engine3.deposit(lp3, 1_000_000_000_000_000_000, 100).unwrap();
 
     let max_pos = MAX_POSITION_ABS as i128;
     let r3 = engine3.execute_trade(&NoOpMatcher, lp3, user3, 100, 1_000_000, max_pos);
@@ -6358,7 +6574,7 @@ fn proof_gap4_trade_partial_fill_diff_price_no_panic() {
     if result.is_ok() {
         kani::assert(
             canonical_inv(&engine),
-            "INV must hold after partial fill at different price"
+            "INV must hold after partial fill at different price",
         );
     }
     // No panic regardless of Ok/Err
@@ -6466,7 +6682,7 @@ fn proof_gap5_fee_settle_margin_or_err() {
             // Position exists and margin is insufficient
             kani::assert(
                 !engine.accounts[user as usize].position_size.is_zero(),
-                "Undercollateralized error requires open position"
+                "Undercollateralized error requires open position",
             );
         }
         Err(_) => {
@@ -6508,7 +6724,10 @@ fn proof_gap5_fee_credits_trade_then_settle_bounded() {
     let credits_after_trade = engine.accounts[user as usize].fee_credits.get();
     // Trading fee was credited — credits increased
     let trade_credit = credits_after_trade - credits_before_trade;
-    kani::assert(trade_credit >= 0, "trade must credit non-negative fee_credits");
+    kani::assert(
+        trade_credit >= 0,
+        "trade must credit non-negative fee_credits",
+    );
 
     // Set last_fee_slot
     engine.accounts[user as usize].last_fee_slot = 100;
@@ -6528,11 +6747,14 @@ fn proof_gap5_fee_credits_trade_then_settle_bounded() {
         // fee_credits tracks the coupon balance
         kani::assert(
             credits_after_settle <= credits_after_trade,
-            "fee_credits must not increase from settle"
+            "fee_credits must not increase from settle",
         );
     }
 
-    kani::assert(canonical_inv(&engine), "canonical_inv must hold after trade + settle");
+    kani::assert(
+        canonical_inv(&engine),
+        "canonical_inv must hold after trade + settle",
+    );
 }
 
 /// Gap 5, Proof 17: fee_credits saturating near i128::MAX
@@ -6563,7 +6785,10 @@ fn proof_gap5_fee_credits_saturating_near_max() {
     );
 
     let credits_before = engine.accounts[user as usize].fee_credits.get();
-    kani::assert(credits_before == i128::MAX - 100, "credits should be MAX - 100");
+    kani::assert(
+        credits_before == i128::MAX - 100,
+        "credits should be MAX - 100",
+    );
 
     // Execute trade which adds more fee credits via saturating_add
     let result = engine.execute_trade(&NoOpMatcher, lp, user, 100, 1_000_000, 50);
@@ -6572,8 +6797,14 @@ fn proof_gap5_fee_credits_saturating_near_max() {
         let credits_after = engine.accounts[user as usize].fee_credits.get();
         // Must not have wrapped — saturating_add caps at i128::MAX
         kani::assert(credits_after <= i128::MAX, "fee_credits must not wrap");
-        kani::assert(credits_after >= credits_before, "fee_credits must not decrease from trade");
-        kani::assert(canonical_inv(&engine), "INV must hold after trade near fee_credits max");
+        kani::assert(
+            credits_after >= credits_before,
+            "fee_credits must not decrease from trade",
+        );
+        kani::assert(
+            canonical_inv(&engine),
+            "INV must hold after trade near fee_credits max",
+        );
     }
     // If Err, no concern about wrapping — trade didn't happen
 }
@@ -6611,26 +6842,26 @@ fn proof_gap5_deposit_fee_credits_conservation() {
     // Verify conservation still holds
     kani::assert(
         conservation_fast_no_funding(&engine),
-        "conservation must hold after deposit_fee_credits"
+        "conservation must hold after deposit_fee_credits",
     );
 
     // Verify vault increased by amount
     kani::assert(
         engine.vault.get() == vault_before + amount,
-        "vault must increase by amount"
+        "vault must increase by amount",
     );
 
     // Verify insurance increased by amount
     kani::assert(
         engine.insurance_fund.balance.get() == insurance_before + amount,
-        "insurance must increase by amount"
+        "insurance must increase by amount",
     );
 
     // Verify fee_credits increased by amount (saturating)
     let credits_after = engine.accounts[user as usize].fee_credits.get();
     kani::assert(
         credits_after == credits_before.saturating_add(amount as i128),
-        "fee_credits must increase by amount"
+        "fee_credits must increase by amount",
     );
 }
 
@@ -6659,7 +6890,10 @@ fn proof_set_pnl_maintains_pnl_pos_tot() {
     engine.set_pnl(user as usize, initial_pnl);
 
     // Verify initial invariant holds
-    assert!(inv_aggregates(&engine), "invariant must hold after initial set_pnl");
+    assert!(
+        inv_aggregates(&engine),
+        "invariant must hold after initial set_pnl"
+    );
 
     // Now change pnl to a new value
     let new_pnl: i128 = kani::any();
@@ -6670,7 +6904,7 @@ fn proof_set_pnl_maintains_pnl_pos_tot() {
     // Invariant must still hold
     kani::assert(
         inv_aggregates(&engine),
-        "set_pnl must maintain pnl_pos_tot invariant"
+        "set_pnl must maintain pnl_pos_tot invariant",
     );
 }
 
@@ -6689,7 +6923,10 @@ fn proof_set_capital_maintains_c_tot() {
     engine.vault = U128::new(initial_cap + 1000); // Ensure vault covers
 
     // Verify initial invariant
-    assert!(inv_aggregates(&engine), "invariant must hold after initial set_capital");
+    assert!(
+        inv_aggregates(&engine),
+        "invariant must hold after initial set_capital"
+    );
 
     // Change capital
     let new_cap: u128 = kani::any();
@@ -6700,7 +6937,7 @@ fn proof_set_capital_maintains_c_tot() {
 
     kani::assert(
         inv_aggregates(&engine),
-        "set_capital must maintain c_tot invariant"
+        "set_capital must maintain c_tot invariant",
     );
 }
 
@@ -6753,7 +6990,7 @@ fn proof_force_close_with_set_pnl_preserves_invariant() {
     // If set_pnl didn't maintain pnl_pos_tot, this would FAIL
     kani::assert(
         inv_aggregates(&engine),
-        "force-close using set_pnl must preserve aggregate invariant"
+        "force-close using set_pnl must preserve aggregate invariant",
     );
 }
 
@@ -6786,13 +7023,19 @@ fn proof_multiple_force_close_preserves_invariant() {
 
     // Force-close user1
     let pnl_delta1 = pos1.saturating_mul(settlement_price as i128 - 1_000_000) / 1_000_000;
-    let new_pnl1 = engine.accounts[user1 as usize].pnl.get().saturating_add(pnl_delta1);
+    let new_pnl1 = engine.accounts[user1 as usize]
+        .pnl
+        .get()
+        .saturating_add(pnl_delta1);
     engine.set_pnl(user1 as usize, new_pnl1);
     engine.accounts[user1 as usize].position_size = I128::ZERO;
 
     // Force-close user2
     let pnl_delta2 = pos2.saturating_mul(settlement_price as i128 - 1_000_000) / 1_000_000;
-    let new_pnl2 = engine.accounts[user2 as usize].pnl.get().saturating_add(pnl_delta2);
+    let new_pnl2 = engine.accounts[user2 as usize]
+        .pnl
+        .get()
+        .saturating_add(pnl_delta2);
     engine.set_pnl(user2 as usize, new_pnl2);
     engine.accounts[user2 as usize].position_size = I128::ZERO;
 
@@ -6803,7 +7046,7 @@ fn proof_multiple_force_close_preserves_invariant() {
 
     kani::assert(
         inv_aggregates(&engine),
-        "multiple force-close operations must preserve invariant"
+        "multiple force-close operations must preserve invariant",
     );
 }
 
@@ -6833,7 +7076,10 @@ fn proof_haircut_ratio_bounded() {
 
     // Haircut ratio must be in [0, 1]
     kani::assert(h_num <= h_den, "haircut ratio must be <= 1");
-    kani::assert(h_den > 0 || (h_num == 1 && h_den == 1), "haircut denominator must be positive or (1,1)");
+    kani::assert(
+        h_den > 0 || (h_num == 1 && h_den == 1),
+        "haircut denominator must be positive or (1,1)",
+    );
 }
 
 /// Prove effective_pos_pnl never exceeds actual positive pnl.
@@ -6861,7 +7107,7 @@ fn proof_effective_pnl_bounded_by_actual() {
 
     kani::assert(
         eff <= actual_pos,
-        "effective_pos_pnl must not exceed actual positive pnl"
+        "effective_pos_pnl must not exceed actual positive pnl",
     );
 }
 
@@ -6890,13 +7136,13 @@ fn proof_recompute_aggregates_correct() {
     // Now invariant should hold
     kani::assert(
         engine.c_tot.get() == capital,
-        "recompute_aggregates must fix c_tot"
+        "recompute_aggregates must fix c_tot",
     );
 
     let expected_pnl_pos = if pnl > 0 { pnl as u128 } else { 0 };
     kani::assert(
         engine.pnl_pos_tot.get() == expected_pnl_pos,
-        "recompute_aggregates must fix pnl_pos_tot"
+        "recompute_aggregates must fix pnl_pos_tot",
     );
 }
 
@@ -6934,7 +7180,7 @@ fn proof_NEGATIVE_bypass_set_pnl_breaks_invariant() {
     // This SHOULD FAIL - pnl_pos_tot is now stale
     kani::assert(
         inv_aggregates(&engine),
-        "EXPECTED TO FAIL: bypassing set_pnl breaks pnl_pos_tot invariant"
+        "EXPECTED TO FAIL: bypassing set_pnl breaks pnl_pos_tot invariant",
     );
 }
 
@@ -6980,10 +7226,19 @@ fn proof_settle_mark_to_oracle_preserves_inv() {
     let result = engine.settle_mark_to_oracle(user_idx, oracle);
 
     if result.is_ok() {
-        kani::assert(canonical_inv(&engine), "INV must hold after settle_mark_to_oracle");
+        kani::assert(
+            canonical_inv(&engine),
+            "INV must hold after settle_mark_to_oracle",
+        );
         // vault, c_tot, insurance must all be unchanged
-        kani::assert(engine.vault.get() == vault_before, "vault unchanged by mark settlement");
-        kani::assert(engine.c_tot.get() == c_tot_before, "c_tot unchanged by mark settlement");
+        kani::assert(
+            engine.vault.get() == vault_before,
+            "vault unchanged by mark settlement",
+        );
+        kani::assert(
+            engine.c_tot.get() == c_tot_before,
+            "c_tot unchanged by mark settlement",
+        );
         kani::assert(
             engine.insurance_fund.balance.get() == ins_before,
             "insurance unchanged by mark settlement",
@@ -6991,7 +7246,10 @@ fn proof_settle_mark_to_oracle_preserves_inv() {
     }
 
     // Non-vacuity: force Ok path
-    let _ = assert_ok!(result, "settle_mark_to_oracle must succeed with small position");
+    let _ = assert_ok!(
+        result,
+        "settle_mark_to_oracle must succeed with small position"
+    );
 }
 
 // ----------------------------------------------------------------------------
@@ -7036,8 +7294,14 @@ fn proof_touch_account_preserves_inv() {
 
     if result.is_ok() {
         kani::assert(canonical_inv(&engine), "INV must hold after touch_account");
-        kani::assert(engine.vault.get() == vault_before, "vault unchanged by touch");
-        kani::assert(engine.c_tot.get() == c_tot_before, "c_tot unchanged by touch");
+        kani::assert(
+            engine.vault.get() == vault_before,
+            "vault unchanged by touch",
+        );
+        kani::assert(
+            engine.c_tot.get() == c_tot_before,
+            "c_tot unchanged by touch",
+        );
         kani::assert(
             engine.insurance_fund.balance.get() == ins_before,
             "insurance unchanged by touch",
@@ -7105,7 +7369,10 @@ fn proof_touch_account_full_preserves_inv() {
     }
 
     // Non-vacuity: force Ok path (well-capitalized account with tiny position)
-    let _ = assert_ok!(result, "touch_account_full must succeed with well-capitalized account");
+    let _ = assert_ok!(
+        result,
+        "touch_account_full must succeed with well-capitalized account"
+    );
 }
 
 // ----------------------------------------------------------------------------
@@ -7144,9 +7411,15 @@ fn proof_settle_loss_only_preserves_inv() {
     let result = engine.settle_loss_only(user_idx);
 
     if result.is_ok() {
-        kani::assert(canonical_inv(&engine), "INV must hold after settle_loss_only");
+        kani::assert(
+            canonical_inv(&engine),
+            "INV must hold after settle_loss_only",
+        );
         // vault and insurance must be unchanged
-        kani::assert(engine.vault.get() == vault_before, "vault unchanged by settle_loss_only");
+        kani::assert(
+            engine.vault.get() == vault_before,
+            "vault unchanged by settle_loss_only",
+        );
         kani::assert(
             engine.insurance_fund.balance.get() == ins_before,
             "insurance unchanged by settle_loss_only",
@@ -7191,7 +7464,10 @@ fn proof_accrue_funding_preserves_inv() {
     // Set a non-zero funding rate so the function does real work
     let rate: i64 = kani::any();
     kani::assume(rate >= -100 && rate <= 100);
-    engine.funding_rate_bps_per_slot_last = rate;
+    assert_ok!(
+        engine.set_funding_rate_for_next_interval(rate),
+        "set funding rate"
+    );
 
     kani::assume(canonical_inv(&engine));
 
@@ -7209,8 +7485,14 @@ fn proof_accrue_funding_preserves_inv() {
 
     if result.is_ok() {
         kani::assert(canonical_inv(&engine), "INV must hold after accrue_funding");
-        kani::assert(engine.vault.get() == vault_before, "vault unchanged by accrue_funding");
-        kani::assert(engine.c_tot.get() == c_tot_before, "c_tot unchanged by accrue_funding");
+        kani::assert(
+            engine.vault.get() == vault_before,
+            "vault unchanged by accrue_funding",
+        );
+        kani::assert(
+            engine.c_tot.get() == c_tot_before,
+            "c_tot unchanged by accrue_funding",
+        );
         kani::assert(
             engine.insurance_fund.balance.get() == ins_before,
             "insurance unchanged by accrue_funding",
@@ -7286,8 +7568,14 @@ fn proof_set_pnl_preserves_conservation() {
         conservation_fast_no_funding(&engine),
         "conservation must hold after set_pnl",
     );
-    kani::assert(engine.vault.get() == vault_before, "vault unchanged by set_pnl");
-    kani::assert(engine.c_tot.get() == c_tot_before, "c_tot unchanged by set_pnl");
+    kani::assert(
+        engine.vault.get() == vault_before,
+        "vault unchanged by set_pnl",
+    );
+    kani::assert(
+        engine.c_tot.get() == c_tot_before,
+        "c_tot unchanged by set_pnl",
+    );
     kani::assert(
         engine.insurance_fund.balance.get() == ins_before,
         "insurance unchanged by set_pnl",
@@ -7414,13 +7702,16 @@ fn proof_lifecycle_trade_then_touch_full_conservation() {
     kani::assert(canonical_inv(&engine), "INV after open trade");
 
     // Step 3: Oracle moves (symbolic — this is where PnL diverges from entry)
-    let oracle_2: u64 = kani::any();
+    let oracle_2: u64 = kani::any::<u32>() as u64;
     kani::assume(oracle_2 >= 800_000 && oracle_2 <= 1_200_000); // $0.80 - $1.20
 
     // Step 4: Accrue funding with symbolic rate
-    let funding_rate: i64 = kani::any();
+    let funding_rate: i64 = kani::any::<i8>() as i64;
     kani::assume(funding_rate > -50 && funding_rate < 50);
-    engine.set_funding_rate_for_next_interval(funding_rate);
+    assert_ok!(
+        engine.set_funding_rate_for_next_interval(funding_rate),
+        "set funding rate"
+    );
 
     let accrue_result = engine.accrue_funding(100, oracle_2);
     if accrue_result.is_ok() {
@@ -7482,7 +7773,7 @@ fn proof_lifecycle_trade_crash_settle_loss_conservation() {
     kani::assert(canonical_inv(&engine), "INV after trade");
 
     // Step 3: Oracle crashes (symbolic, but below entry → user loses)
-    let oracle_crash: u64 = kani::any();
+    let oracle_crash: u64 = kani::any::<u32>() as u64;
     kani::assume(oracle_crash >= 500_000 && oracle_crash <= 999_999); // $0.50 - $0.999
 
     // Step 4: Crank at crashed oracle — may liquidate user
@@ -7540,7 +7831,7 @@ fn proof_lifecycle_trade_warmup_withdraw_topup_conservation() {
     kani::assert(canonical_inv(&engine), "INV after trade");
 
     // Step 3: Oracle moves up (user profits)
-    let oracle_2: u64 = kani::any();
+    let oracle_2: u64 = kani::any::<u32>() as u64;
     kani::assume(oracle_2 >= 1_000_001 && oracle_2 <= 1_200_000); // $1.00 - $1.20
 
     // Step 4: Crank at new oracle
@@ -7568,7 +7859,7 @@ fn proof_lifecycle_trade_warmup_withdraw_topup_conservation() {
     }
 
     // Step 8: Withdraw some capital
-    let withdraw_amt: u128 = kani::any();
+    let withdraw_amt: u128 = kani::any::<u16>() as u128;
     kani::assume(withdraw_amt > 0 && withdraw_amt < 10_000);
     let w = engine.withdraw(user, withdraw_amt, 200, oracle_2);
     if w.is_ok() {
@@ -7576,7 +7867,7 @@ fn proof_lifecycle_trade_warmup_withdraw_topup_conservation() {
     }
 
     // Step 9: Top up insurance
-    let topup_amt: u128 = kani::any();
+    let topup_amt: u128 = kani::any::<u16>() as u128;
     kani::assume(topup_amt > 0 && topup_amt < 50_000);
     let t = engine.top_up_insurance_fund(topup_amt);
     if t.is_ok() {

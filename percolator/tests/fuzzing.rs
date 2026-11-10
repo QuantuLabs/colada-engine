@@ -1,3 +1,4 @@
+// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 //! Comprehensive Fuzzing Suite for the Risk Engine
 //!
 //! ## Running Tests
@@ -44,7 +45,7 @@ fn new_test_engine(params: RiskParams) -> Box<RiskEngine> {
     }
 
     unsafe {
-        (*ptr).init_in_place(params);
+        (*ptr).init_in_place(params).unwrap();
         Box::from_raw(ptr)
     }
 }
@@ -94,6 +95,16 @@ fn funding_payment(position: i128, delta_f: i128) -> i128 {
     } else {
         raw.saturating_div(1_000_000)
     }
+}
+
+fn accrue_funding_at_rate(
+    engine: &mut RiskEngine,
+    now_slot: u64,
+    oracle_price: u64,
+    rate_bps_per_slot: i64,
+) -> Result<()> {
+    engine.set_funding_rate_for_next_interval(rate_bps_per_slot)?;
+    engine.accrue_funding(now_slot, oracle_price)
 }
 
 // ============================================================================
@@ -183,10 +194,12 @@ fn params_regime_a() -> RiskParams {
         initial_margin_bps: 1000,
         trading_fee_bps: 10,
         max_accounts: 32, // Small for speed
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::new(0),
         risk_reduction_threshold: U128::new(0),
         maintenance_fee_per_slot: U128::new(0),
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,
         liquidation_fee_cap: U128::new(100_000),
         liquidation_buffer_bps: 100,
@@ -202,10 +215,12 @@ fn params_regime_b() -> RiskParams {
         initial_margin_bps: 1000,
         trading_fee_bps: 10,
         max_accounts: 32, // Small for speed
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::new(0),
         risk_reduction_threshold: U128::new(1000),
         maintenance_fee_per_slot: U128::new(0),
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,
         liquidation_fee_cap: U128::new(100_000),
         liquidation_buffer_bps: 100,
@@ -320,8 +335,8 @@ struct FuzzState {
     engine: Box<RiskEngine>,
     live_accounts: Vec<u16>,
     lp_idx: Option<u16>,
-    account_ids: Vec<u64>, // Track allocated account IDs for uniqueness
-    rng_state: u64,        // For deterministic selector resolution
+    account_ids: Vec<u64>,  // Track allocated account IDs for uniqueness
+    rng_state: u64,         // For deterministic selector resolution
     last_oracle_price: u64, // Track last oracle price for conservation checks with mark PnL
 }
 
@@ -565,9 +580,12 @@ impl FuzzState {
                 let last_slot_before = self.engine.last_funding_slot;
                 let now_slot = self.engine.current_slot.saturating_add(*dt);
 
-                let result = self
-                    .engine
-                    .accrue_funding_with_rate(now_slot, *oracle_price, *rate_bps);
+                let result = accrue_funding_at_rate(
+                    self.engine.as_mut(),
+                    now_slot,
+                    *oracle_price,
+                    *rate_bps,
+                );
 
                 match result {
                     Ok(()) => {
@@ -804,7 +822,7 @@ proptest! {
                      w1, w2, earlier, later);
     }
 
-    // 2. withdrawable_pnl == 0 if pnl<=0 or slope==0 or elapsed==0
+    // 2. withdrawable_pnl == 0 if pnl<=0. A zero slope stays locked until T.
     #[test]
     fn fuzz_prop_withdrawable_zero_conditions(
         principal in 0u128..100_000,
@@ -843,7 +861,16 @@ proptest! {
         engine.current_slot = slot;
 
         let withdrawable = engine.withdrawable_pnl(&engine.accounts[user_idx as usize]);
-        prop_assert_eq!(withdrawable, 0, "Withdrawable should be 0 for zero slope");
+        let expected = if slot >= engine.params.warmup_period_slots {
+            pnl as u128
+        } else {
+            0
+        };
+        prop_assert_eq!(
+            withdrawable,
+            expected,
+            "Zero slope should only unlock after the full warmup period"
+        );
     }
 
     // 4. settle_warmup_to_capital idempotent at same slot
@@ -925,7 +952,7 @@ proptest! {
         let slot_before = engine.last_funding_slot;
 
         // Accrue with same slot (dt=0)
-        let _ = engine.accrue_funding_with_rate(slot_before, price, rate);
+        let _ = accrue_funding_at_rate(&mut engine, slot_before, price, rate);
 
         prop_assert_eq!(engine.funding_index_qpb_e6, index_before,
                         "Funding index changed with dt=0");
@@ -1215,14 +1242,16 @@ fn run_deterministic_fuzzer(
             eprintln!("Conservation failed after setup for seed {}", seed);
             eprintln!(
                 "  vault={}, insurance={}",
-                state.engine.vault.get(), state.engine.insurance_fund.balance.get()
+                state.engine.vault.get(),
+                state.engine.insurance_fund.balance.get()
             );
             eprintln!("  live_accounts={:?}", state.live_accounts);
             let mut total_cap = 0u128;
             for &idx in &state.live_accounts {
                 eprintln!(
                     "  account[{}]: capital={}",
-                    idx, state.engine.accounts[idx as usize].capital.get()
+                    idx,
+                    state.engine.accounts[idx as usize].capital.get()
                 );
                 total_cap += state.engine.accounts[idx as usize].capital.get();
             }
@@ -1449,7 +1478,7 @@ fn conservation_uses_settled_pnl_regression() {
 
     // Accrue significant funding WITHOUT touching accounts
     // This creates a gap between account.pnl and settled_pnl
-    engine.accrue_funding_with_rate(1000, 1_000_000, 500).unwrap();
+    accrue_funding_at_rate(&mut engine, 1000, 1_000_000, 100).unwrap();
 
     // Manually compute conservation using settled_pnl formula
     let global_index = engine.funding_index_qpb_e6.get();
@@ -1521,7 +1550,7 @@ fn harness_rollback_simulation_test() {
     engine.deposit(user_idx, 1000, 0).unwrap();
 
     // Accrue some funding to create state that could be mutated
-    engine.accrue_funding_with_rate(100, 1_000_000, 100).unwrap();
+    accrue_funding_at_rate(&mut engine, 100, 1_000_000, 100).unwrap();
 
     // Capture complete state before failed operation (deep clone of RiskEngine)
     let before = (*engine).clone();

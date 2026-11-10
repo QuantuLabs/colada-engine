@@ -1,3 +1,4 @@
+// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 // End-to-end integration tests with realistic AMM matcher
 // Tests complete user journeys with multiple participants
 
@@ -11,7 +12,7 @@ fn new_test_engine(params: RiskParams) -> Box<RiskEngine> {
     }
 
     unsafe {
-        (*ptr).init_in_place(params);
+        (*ptr).init_in_place(params).unwrap();
         Box::from_raw(ptr)
     }
 }
@@ -23,10 +24,12 @@ fn default_params() -> RiskParams {
         initial_margin_bps: 1000,    // 10%
         trading_fee_bps: 10,         // 0.1%
         max_accounts: 1000,
+        max_exec_deviation_bps: 1_000,
         new_account_fee: U128::new(0),          // Zero fee for tests
         risk_reduction_threshold: U128::new(0), // Default: only trigger on full depletion
         maintenance_fee_per_slot: U128::new(0), // No maintenance fee by default
         max_crank_staleness_slots: u64::MAX,
+        max_funding_rate_bps_per_slot: ABSOLUTE_MAX_FUNDING_RATE_BPS_PER_SLOT,
         liquidation_fee_bps: 50,                 // 0.5% liquidation fee
         liquidation_fee_cap: U128::new(100_000), // Cap at 100k units
         liquidation_buffer_bps: 100,             // 1% buffer above maintenance
@@ -64,6 +67,21 @@ fn clamp_pos_i128(val: i128) -> u128 {
     } else {
         0
     }
+}
+
+fn mark_crank_fresh(engine: &mut RiskEngine, slot: u64) {
+    engine.last_crank_slot = slot;
+    engine.last_full_sweep_start_slot = slot;
+}
+
+fn accrue_funding_at_rate(
+    engine: &mut RiskEngine,
+    now_slot: u64,
+    oracle_price: u64,
+    rate_bps_per_slot: i64,
+) -> Result<()> {
+    engine.set_funding_rate_for_next_interval(rate_bps_per_slot)?;
+    engine.accrue_funding(now_slot, oracle_price)
 }
 
 // ============================================================================
@@ -131,9 +149,8 @@ fn test_e2e_complete_user_journey() {
 
     // Accrue funding rate (longs pay shorts)
     engine.advance_slot(10);
-    engine
-        .accrue_funding_with_rate(engine.current_slot, new_price, 100)
-        .unwrap(); // 100 bps/slot, longs pay
+    let slot = engine.current_slot;
+    accrue_funding_at_rate(&mut engine, slot, new_price, 100).unwrap(); // 100 bps/slot, longs pay
 
     // Settle funding for users
     engine.touch_account(alice).unwrap();
@@ -164,6 +181,7 @@ fn test_e2e_complete_user_journey() {
 
     // Alice closes her remaining position first
     let slot = engine.current_slot;
+    mark_crank_fresh(&mut engine, slot);
     engine
         .execute_trade(
             &MATCHER,
@@ -184,6 +202,7 @@ fn test_e2e_complete_user_journey() {
 
     if alice_withdrawal > 0 {
         let slot = engine.current_slot;
+        mark_crank_fresh(&mut engine, slot);
         engine
             .withdraw(alice, alice_withdrawal, slot, 1_000_000)
             .unwrap();
@@ -333,9 +352,8 @@ fn test_e2e_funding_complete_cycle() {
 
     // Advance time and accrue funding (longs pay shorts)
     engine.advance_slot(20);
-    engine
-        .accrue_funding_with_rate(engine.current_slot, 1_000_000, 50)
-        .unwrap(); // 50 bps/slot
+    let slot = engine.current_slot;
+    accrue_funding_at_rate(&mut engine, slot, 1_000_000, 50).unwrap(); // 50 bps/slot
 
     // Settle funding
     engine.touch_account(alice).unwrap();
@@ -374,9 +392,8 @@ fn test_e2e_funding_complete_cycle() {
 
     // Advance time and accrue more funding (now Alice receives, Bob pays)
     engine.advance_slot(20);
-    engine
-        .accrue_funding_with_rate(engine.current_slot, 1_000_000, 50)
-        .unwrap();
+    let slot = engine.current_slot;
+    accrue_funding_at_rate(&mut engine, slot, 1_000_000, 50).unwrap();
 
     engine.touch_account(alice).unwrap();
     engine.touch_account(bob).unwrap();

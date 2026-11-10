@@ -1,23 +1,23 @@
+# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 [package]
-name = "colada"
+name = "colada-engine"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+description = "Stateless no_std numerical kernel of the Colada perpetual-futures risk engine"
+publish = false
+repository = "https://github.com/QuantuLabs/colada-engine"
+readme = "README.md"
 
 [lib]
-name = "colada"
-path = "src/colada.rs"
+name = "colada_engine"
+path = "src/lib.rs"
 
 [dependencies]
 # No runtime dependencies - pure no_std compatible library
 
 [dev-dependencies]
-proptest = "1.4"
-
-[features]
-default = []
-test = []  # Use MAX_ACCOUNTS=64 for tests
-fuzz = []  # Enable fuzzing tests
+solana-sha256-hasher = { version = "3.1", features = ["sha2"] }
 
 [profile.release]
 lto = "fat"
@@ -29,10 +29,14 @@ overflow-checks = true
 inherits = "release"
 panic = "abort"
 
+[workspace]
+members = [".", "percolator"]
+default-members = ["."]
+resolver = "2"
+
 [workspace.metadata.kani]
 flags = { tests = true }
 unstable = { stubbing = true }
 
-[[workspace.metadata.kani.proof]]
-harness = ".*"
-unwind = 70
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

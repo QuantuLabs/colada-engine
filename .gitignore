@@ -1,3 +1,4 @@
+# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 # Rust/Cargo
 /target/
 **/*.rs.bk
@@ -27,7 +28,6 @@
 \#*\#
 
 # OS files
-.DS_Store
 Thumbs.db
 desktop.ini
 
@@ -35,7 +35,13 @@ desktop.ini
 *.profraw
 *.profdata
 
+# Audit working files (local only)
+audit-findings/
+
 # Local configuration
-.env
-.env.local
+.env*
+.tmp/
+*.pem
+*.key
+*-keypair.json
 test-ledger/

@@ -1,3 +1,4 @@
+// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
 // ============================================================================
 // BPF-Safe 128-bit Types
 // ============================================================================
@@ -89,7 +90,7 @@ impl I128 {
 
     #[inline(always)]
     pub fn abs(self) -> Self {
-        Self(self.0.abs())
+        Self(self.0.saturating_abs())
     }
 
     #[inline(always)]
@@ -307,7 +308,7 @@ impl I128 {
 
     #[inline]
     pub fn abs(self) -> Self {
-        Self::new(self.get().abs())
+        Self::new(self.get().saturating_abs())
     }
 
     #[inline]
@@ -908,7 +909,7 @@ impl core::ops::Mul<i128> for I128 {
 impl core::ops::Neg for I128 {
     type Output = Self;
     fn neg(self) -> Self {
-        Self::new(-self.get())
+        Self::new(self.get().saturating_neg())
     }
 }
 
