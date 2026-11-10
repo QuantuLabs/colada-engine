@@ -659,6 +659,8 @@ impl RiskEngine {
             params.maintenance_margin_bps <= params.initial_margin_bps,
             "maintenance_margin_bps must not exceed initial_margin_bps"
         );
+        assert!(params.trading_fee_bps <= 10_000 && params.liquidation_fee_bps <= 10_000,
+            "fee bps must not exceed 10000");
         // A zero warmup period defeats the PnL timelock. Keep the API infallible by
         // flooring to one slot instead of accepting instant warmup silently.
         if params.warmup_period_slots == 0 {
@@ -804,7 +806,8 @@ impl RiskEngine {
         {
             return Err(RiskError::Unauthorized);
         }
-        if params.maintenance_margin_bps > params.initial_margin_bps {
+        if params.maintenance_margin_bps > params.initial_margin_bps
+            || params.trading_fee_bps > 10_000 || params.liquidation_fee_bps > 10_000 {
             return Err(RiskError::Overflow);
         }
 
@@ -3124,7 +3127,8 @@ impl RiskEngine {
             mul_u128(saturating_abs_i128(exec_size) as u128, exec_price as u128) / 1_000_000;
         let fee = if notional > 0 && self.params.trading_fee_bps > 0 {
             // Ceiling division: ensures at least 1 atomic unit fee for any real trade
-            (mul_u128(notional, self.params.trading_fee_bps as u128) + 9999) / 10_000
+            mul_u128(notional, self.params.trading_fee_bps as u128)
+                .checked_add(9999).ok_or(RiskError::Overflow)? / 10_000
         } else {
             0
         };

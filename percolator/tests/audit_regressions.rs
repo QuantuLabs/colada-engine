@@ -502,3 +502,14 @@ fn zero_rate_funding_catches_up_after_idle_deposit() {
     engine.set_funding_rate_for_next_interval(1).unwrap();
     assert_eq!(engine.accrue_funding(63_072_002, 1_000_000), Err(RiskError::Overflow));
 }
+
+#[test]
+fn constructors_reject_fees_above_full_notional() {
+    for trading in [false, true] {
+        let mut params = default_params();
+        if trading { params.trading_fee_bps = 10_001; }
+        else { params.liquidation_fee_bps = 10_001; }
+        assert!(std::panic::catch_unwind(|| new_test_engine(params)).is_err());
+        assert!(std::panic::catch_unwind(|| RiskEngine::new(params)).is_err());
+    }
+}
