@@ -4,4 +4,5 @@
 #[cfg(kani)]
 extern crate kani;
 
+pub mod funding;
 pub mod math;
