@@ -39,7 +39,9 @@ Changes to the Percolator engine (`percolator/`):
 - Execution: a maximum deviation between the matcher price and the oracle price.
 - Aggregates: checked open-interest and LP totals; the conservation check also
   recomputes the stored totals.
-- A regression suite for these changes.
+- Six fixes ported from later upstream commits, and a regression suite for all
+  of these changes. [Provenance](docs/PROVENANCE.md) lists what upstream changed
+  since and what is not ported.
 
 New code for Colada's program (`src/`):
 
@@ -70,7 +72,7 @@ bash scripts/run_kani_full_audit.sh funded_net_respects_caps
 | Crate | Tests | Kani harnesses | Recorded PASS |
 | --- | ---: | ---: | ---: |
 | `colada-engine` (`src/`) | 26 | 133 | 131 |
-| `colada` (`percolator/`) | 133 | 147 | 144 |
+| `colada` (`percolator/`) | 140 | 147 | 143 |
 
 Each harness proves its assertions over a stated finite input domain.
 [Verification](docs/VERIFICATION.md) lists every domain, the CI matrix and the

@@ -7,7 +7,7 @@ cargo check --workspace --locked
 cargo test --workspace --features colada/test,colada/fuzz --locked
 ```
 
-Tests: 26 in `colada-engine` and 133 in `colada`. One extended fuzz test is ignored by default; run it
+Tests: 26 in `colada-engine` and 140 in `colada`. One extended fuzz test is ignored by default; run it
 with `--ignored`. The root crate's tests replay the conformance vectors in
 `tests/fixtures/` and check arithmetic boundaries. Default workspace commands
 select only the root crate; `--workspace` adds the Percolator engine (`colada`).
@@ -161,13 +161,14 @@ locally: write each package's results to `<dir>/<package>/results.tsv` with
 
 [`verification/kani-results.tsv`](../verification/kani-results.tsv) has one row
 per harness: `package`, `harness`, `kind` (`positive` or `negative_control`),
-`status`, `seconds` and `object_bits`. The rows are the outcomes of one CI
-matrix run on `ubuntu-24.04` with a 900-second limit. CI allows 1500 seconds so
-that a recorded PASS keeps headroom on a slower runner. A harness without a row is
+`status`, `seconds` and `object_bits`. The rows are the outcomes of manual
+CI matrix runs on `ubuntu-24.04` with `timeout_seconds` set to 900; a harness
+that exceeded the limit in any of them is recorded `TIMEOUT`. Pushes use 1500
+seconds so that a recorded PASS keeps headroom on a slower runner. A harness without a row is
 `UNRECORDED`. A changed harness, or a change to the code it calls, needs a new
 CI result before its row is updated.
 
-Five harnesses do not conclude in the recorded run. None reports a failed check.
+Six harnesses are not recorded as PASS. None reports a failed check.
 
 | Package | Harness | Outcome |
 | --- | --- | --- |
@@ -175,7 +176,8 @@ Five harnesses do not conclude in the recorded run. None reports a failed check.
 | `colada-engine` | `u256_top_limb_division_ceil_and_zero_denominator` | Time limit. |
 | `colada` | `proof_gap3_multi_step_lifecycle_conservation` | Solver out of memory under the 8 GB limit. |
 | `colada` | `proof_lifecycle_trade_warmup_withdraw_topup_conservation` | Solver out of memory under the 8 GB limit. |
-| `colada` | `proof_lifecycle_trade_crash_settle_loss_conservation` | Time limit in the recorded run. Its run time varies and it concludes on some runners. |
+| `colada` | `proof_lifecycle_trade_crash_settle_loss_conservation` | Time limit in one run, PASS in others: its run time varies with the runner. |
+| `colada` | `proof_gap3_conservation_crank_funding_positions` | Time limit in one run, PASS in others: its run time varies with the runner. |
 
 `percolator/kani_audit_full.tsv` is the upstream result table, kept
 unchanged. It is not part of the matrix.

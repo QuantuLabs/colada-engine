@@ -15,10 +15,12 @@ root, and its proofs do not cover that crate.
 
 - [`spec.md`](spec.md): the engine specification.
 - [`audit.md`](audit.md): the upstream proof timing and audit notes, kept as an archive.
+  Its harness descriptions predate upstream's later corrections.
 - `kani_audit_full.tsv`: the upstream result table, unchanged.
 
 The engine stays on the February 2026 architecture. Upstream has since
-rewritten it; [Provenance](../docs/PROVENANCE.md) lists the known differences.
+rewritten it; [Provenance](../docs/PROVENANCE.md) lists the upstream fixes
+ported here and the known differences that are not.
 
 Current outcomes are in the root [result matrix](../verification/kani-results.tsv);
 domains, conditional assertions and unresolved cases are in the

@@ -89,20 +89,20 @@ Upstream kept changing after `d8dad98`. It strengthened its Kani harnesses from
 `src/percolator.rs` on 2026-05-14. That history is not merged here;
 `percolator/` stays on the February architecture.
 
-Known differences from upstream that are not ported yet:
+Fixes ported from upstream, each with a regression test in
+`tests/audit_regressions.rs`:
 
-- Liquidation does not restart warmup when mark settlement adds available
-  profit (upstream `700b8564`).
-- Constructors accept a maintenance margin above the initial margin (upstream
-  `da085a00`, `39ae652c`).
-- `deposit_fee_credits` accepts an amount that overflows the signed credit
-  balance (upstream `c3933293`).
-- Garbage collection frees an empty account that still holds prepaid fee
-  credits (upstream `4777cf50`, `f7d2de85`).
-- Fee debt is not swept when warmup converts profit to capital (upstream
-  `1ab35740`).
-- Vault, insurance and capital totals use saturating additions on inflows
-  (upstream `1ab35740`, `b65a14a1`, `f4930c2e`).
+| Change | Upstream commits |
+| --- | --- |
+| Liquidation restarts warmup when mark settlement adds available profit | `700b8564` |
+| Constructors reject a maintenance margin above the initial margin | `da085a00`, `39ae652c` |
+| `deposit_fee_credits` rejects an amount that overflows the signed credit balance | `c3933293` |
+| Garbage collection keeps an account that holds prepaid fee credits | `4777cf50`, `f7d2de85` |
+| Fee debt is swept when warmup converts profit to capital | `1ab35740` |
+| Account creation, deposits, fee-credit deposits and insurance top-ups reject an inflow that overflows the vault, insurance or capital totals | `1ab35740`, `b65a14a1`, `f4930c2e` |
+
+Known differences that are not ported:
+
 - Haircut products (`effective_pos_pnl`, profit conversion) multiply with
   saturation before dividing, so backed profit is undercounted when
   `pnl × haircut numerator` exceeds `2^128`. Upstream moved to wide arithmetic
@@ -112,6 +112,8 @@ Known differences from upstream that are not ported yet:
 - After the slot advances by more than 31,536,000 without funding accrual, the
   crank returns `Overflow` until accrual catches up in bounded steps (upstream
   `379c3cac`).
+- Internal setters and aggregate recomputation still use saturating additions;
+  only the public inflow paths above are checked.
 - The February harness strengthening (upstream `301ab914` to `e0956618`): 128 of
   the 147 harnesses keep the earlier form.
 
