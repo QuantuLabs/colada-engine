@@ -1,6 +1,5 @@
 {
   "authority": {
-    "r12_sha256": "fc7a128cac2a72dedceed38ef7d9c186f3b46451d371db57197fd368bfb42f9c",
     "scope": "host-test-only-pure-conversion-kernel"
   },
   "constants": {
@@ -90,13 +89,12 @@
     "u256_primitive_edges": 13,
     "validation_precedence": 6
   },
-  "marker": "COLLATERAL_S00P_CONVERSION_KERNEL_R2_HOST_ONLY",
-  "schema": "permissionless-collateral-s00p-conversion-kernel-r2",
+  "marker": "COLADA_CONVERSION_KERNEL_R2_HOST_ONLY",
+  "schema": "colada-conversion-kernel-r2",
   "stage": {
     "abi_reserved": false,
     "release_ready": false,
     "runtime_safety": false,
-    "s01_ready": false,
     "test_only_host_parity": true
   },
   "vectors": {

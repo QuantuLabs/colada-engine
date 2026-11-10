@@ -1,14 +1,12 @@
 use core::cmp::Ordering;
 
-use pinocchio::error::ProgramError;
 
-use crate::errors::ColadaError;
 
-pub(crate) type CollateralAtoms = u64;
-pub(crate) type QuoteE6 = u64;
-pub(crate) type QuoteE6Wide = U256;
-pub(crate) type SignedQuoteE6 = i128;
-pub(crate) type PriceQ64 = u128;
+pub type CollateralAtoms = u64;
+pub type QuoteE6 = u64;
+pub type QuoteE6Wide = U256;
+pub type SignedQuoteE6 = i128;
+pub type PriceQ64 = u128;
 
 const Q64_ONE: PriceQ64 = 1_u128 << 64;
 const QUOTE_E6_SCALE: u64 = 1_000_000;
@@ -16,7 +14,7 @@ const BPS_DENOMINATOR: u64 = 10_000;
 const COLLATERAL_FACTOR_BPS: u64 = 5_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MathError {
+pub enum MathError {
     InvalidDecimals,
     ZeroPrice,
     InvertedPriceBounds,
@@ -31,22 +29,22 @@ pub(crate) enum MathError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct U256([u64; 4]);
+pub struct U256([u64; 4]);
 
 impl U256 {
     const ZERO: Self = Self([0; 4]);
     const ONE: Self = Self([1, 0, 0, 0]);
     const MAX: Self = Self([u64::MAX; 4]);
 
-    pub(crate) const fn from_u64(value: u64) -> Self {
+    pub const fn from_u64(value: u64) -> Self {
         Self([value, 0, 0, 0])
     }
 
-    pub(super) const fn from_u128(value: u128) -> Self {
+    pub const fn from_u128(value: u128) -> Self {
         Self([value as u64, (value >> 64) as u64, 0, 0])
     }
 
-    pub(super) const fn from_limbs_le(value: [u64; 4]) -> Self {
+    pub const fn from_limbs_le(value: [u64; 4]) -> Self {
         Self(value)
     }
 
@@ -60,7 +58,7 @@ impl U256 {
         Ordering::Equal
     }
 
-    pub(super) fn checked_add(self, rhs: Self) -> Result<Self, MathError> {
+    pub fn checked_add(self, rhs: Self) -> Result<Self, MathError> {
         let mut out = [0_u64; 4];
         let mut carry = 0_u128;
         for (index, slot) in out.iter_mut().enumerate() {
@@ -94,7 +92,7 @@ impl U256 {
         Ok(Self(out))
     }
 
-    pub(super) fn checked_mul_u64(self, rhs: u64) -> Result<Self, MathError> {
+    pub fn checked_mul_u64(self, rhs: u64) -> Result<Self, MathError> {
         let mut out = [0_u64; 4];
         let mut carry = 0_u128;
         for (index, slot) in out.iter_mut().enumerate() {
@@ -174,7 +172,7 @@ impl U256 {
         Ok((quotient, remainder))
     }
 
-    pub(super) fn div_ceil_bounded(self, denominator: Self) -> Result<Self, MathError> {
+    pub fn div_ceil_bounded(self, denominator: Self) -> Result<Self, MathError> {
         let (quotient, remainder) = self.div_rem_bounded(denominator)?;
         if remainder == Self::ZERO {
             Ok(quotient)
@@ -183,7 +181,7 @@ impl U256 {
         }
     }
 
-    pub(crate) fn try_u64(self) -> Result<u64, MathError> {
+    pub fn try_u64(self) -> Result<u64, MathError> {
         if self.0[1] != 0 || self.0[2] != 0 || self.0[3] != 0 {
             return Err(MathError::InvalidNarrowing);
         }
@@ -191,7 +189,7 @@ impl U256 {
     }
 }
 
-pub(crate) fn mul_q64_floor(left: u128, right: u128) -> Result<u128, MathError> {
+pub fn mul_q64_floor(left: u128, right: u128) -> Result<u128, MathError> {
     if left == 0 || right == 0 {
         return Err(MathError::ZeroPrice);
     }
@@ -203,7 +201,7 @@ pub(crate) fn mul_q64_floor(left: u128, right: u128) -> Result<u128, MathError> 
     Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
 }
 
-pub(crate) fn mul_q64_ceil(left: u128, right: u128) -> Result<u128, MathError> {
+pub fn mul_q64_ceil(left: u128, right: u128) -> Result<u128, MathError> {
     if left == 0 || right == 0 {
         return Err(MathError::ZeroPrice);
     }
@@ -220,7 +218,7 @@ pub(crate) fn mul_q64_ceil(left: u128, right: u128) -> Result<u128, MathError> {
     Ok(u128::from(value.0[0]) | (u128::from(value.0[1]) << 64))
 }
 
-pub(crate) fn compose_confidence_bps(
+pub fn compose_confidence_bps(
     point: u128,
     lower: u128,
     upper: u128,
@@ -239,7 +237,7 @@ pub(crate) fn compose_confidence_bps(
     u16::try_from(bps).map_err(|_| MathError::OutOfEnvelope)
 }
 
-pub(crate) fn compose_dispersion_bps(left: u16, right: u16) -> Result<u16, MathError> {
+pub fn compose_dispersion_bps(left: u16, right: u16) -> Result<u16, MathError> {
     let cross = u64::from(left)
         .checked_mul(u64::from(right))
         .ok_or(MathError::U256Overflow)?
@@ -257,54 +255,34 @@ pub(crate) fn compose_dispersion_bps(left: u16, right: u16) -> Result<u16, MathE
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PriceBoundsQ64 {
+pub struct PriceBoundsQ64 {
     p_lo: PriceQ64,
     p_hi: PriceQ64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AuthenticatedQuoteCap(QuoteE6);
+pub struct AuthenticatedQuoteCap(QuoteE6);
 
 impl AuthenticatedQuoteCap {
-    pub(crate) const fn from_authenticated_parent(value: QuoteE6) -> Self {
+    pub const fn from_authenticated_parent(value: QuoteE6) -> Self {
         Self(value)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct OpenRequirement {
-    pub(crate) required_pre_haircut_quote_e6_wide: QuoteE6Wide,
-    pub(crate) required_allocation_atoms: CollateralAtoms,
+pub struct OpenRequirement {
+    pub required_pre_haircut_quote_e6_wide: QuoteE6Wide,
+    pub required_allocation_atoms: CollateralAtoms,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct FinalDebitPartition {
-    pub(crate) theoretical_debit_atoms_wide: U256,
-    pub(crate) debited_atoms: CollateralAtoms,
-    pub(crate) covered_loss_quote_e6: QuoteE6,
-    pub(crate) uncovered_loss_quote_e6: QuoteE6,
+pub struct FinalDebitPartition {
+    pub theoretical_debit_atoms_wide: U256,
+    pub debited_atoms: CollateralAtoms,
+    pub covered_loss_quote_e6: QuoteE6,
+    pub uncovered_loss_quote_e6: QuoteE6,
 }
 
-impl From<MathError> for ProgramError {
-    fn from(error: MathError) -> Self {
-        let error = match error {
-            MathError::InvalidDecimals | MathError::DefaultValueRejected => {
-                ColadaError::InvalidCollateralProfile
-            }
-            MathError::IdentityAddressMismatch => ColadaError::CollateralProfileMismatch,
-            MathError::ZeroPrice | MathError::InvertedPriceBounds => {
-                ColadaError::InvalidOraclePrice
-            }
-            MathError::OutOfEnvelope
-            | MathError::U256Overflow
-            | MathError::ZeroDenominator
-            | MathError::InvalidNarrowing => ColadaError::Overflow,
-            MathError::U256Underflow => ColadaError::Underflow,
-            MathError::InsufficientFreeAtoms => ColadaError::InsufficientBalance,
-        };
-        error.into()
-    }
-}
 
 fn collateral_scale(collateral_decimals: u8) -> Result<u64, MathError> {
     match collateral_decimals {
@@ -316,7 +294,7 @@ fn collateral_scale(collateral_decimals: u8) -> Result<u64, MathError> {
     }
 }
 
-pub(crate) fn checked_price_bounds(
+pub fn checked_price_bounds(
     p_lo: PriceQ64,
     p_hi: PriceQ64,
 ) -> Result<PriceBoundsQ64, MathError> {
@@ -329,7 +307,7 @@ pub(crate) fn checked_price_bounds(
     Ok(PriceBoundsQ64 { p_lo, p_hi })
 }
 
-pub(crate) fn quote_e6_floor_wide(
+pub fn quote_e6_floor_wide(
     atoms: CollateralAtoms,
     price_q64: PriceQ64,
     collateral_decimals: u8,
@@ -365,7 +343,7 @@ fn atom_ratio_wide(
     Ok((numerator, denominator))
 }
 
-pub(crate) fn atoms_debit_ceil_wide(
+pub fn atoms_debit_ceil_wide(
     quote_e6_wide: QuoteE6Wide,
     price_q64: PriceQ64,
     collateral_decimals: u8,
@@ -374,7 +352,7 @@ pub(crate) fn atoms_debit_ceil_wide(
     numerator.div_ceil_bounded(denominator)
 }
 
-pub(crate) fn atoms_payout_floor_wide(
+pub fn atoms_payout_floor_wide(
     quote_e6_wide: QuoteE6Wide,
     price_q64: PriceQ64,
     collateral_decimals: u8,
@@ -383,7 +361,7 @@ pub(crate) fn atoms_payout_floor_wide(
     Ok(numerator.div_rem_bounded(denominator)?.0)
 }
 
-pub(crate) fn credited_quote_e6_wide(
+pub fn credited_quote_e6_wide(
     atoms: CollateralAtoms,
     p_lo_q64: PriceQ64,
     collateral_decimals: u8,
@@ -395,7 +373,7 @@ pub(crate) fn credited_quote_e6_wide(
         .0)
 }
 
-pub(crate) fn cap_quote_wide(
+pub fn cap_quote_wide(
     value: QuoteE6Wide,
     authenticated_cap: AuthenticatedQuoteCap,
 ) -> QuoteE6 {
@@ -406,7 +384,7 @@ pub(crate) fn cap_quote_wide(
     }
 }
 
-pub(crate) fn open_pre_haircut_requirement(
+pub fn open_pre_haircut_requirement(
     initial_margin_quote_e6: QuoteE6,
     prices: PriceBoundsQ64,
     collateral_decimals: u8,
@@ -431,7 +409,7 @@ pub(crate) fn open_pre_haircut_requirement(
     })
 }
 
-pub(crate) fn final_debit_partition(
+pub fn final_debit_partition(
     loss_quote_e6: QuoteE6,
     prices: PriceBoundsQ64,
     collateral_decimals: u8,
@@ -469,7 +447,7 @@ pub(crate) fn final_debit_partition(
     })
 }
 
-pub(crate) fn displayed_subatom_impairment_bound_quote_e6(
+pub fn displayed_subatom_impairment_bound_quote_e6(
     prices: PriceBoundsQ64,
     collateral_decimals: u8,
 ) -> Result<QuoteE6Wide, MathError> {
@@ -479,7 +457,7 @@ pub(crate) fn displayed_subatom_impairment_bound_quote_e6(
     numerator.div_ceil_bounded(denominator)
 }
 
-pub(crate) fn identity_price_bounds_by_address_equality(
+pub fn identity_price_bounds_by_address_equality(
     collateral_mint: &[u8; 32],
     quote_mint: &[u8; 32],
     authenticated_mint_decimals: u8,
@@ -509,7 +487,7 @@ fn funded_signed_floor(negative: bool, quotient: u128, remainder: bool) -> i128 
     }
 }
 
-pub(crate) fn funded_net_and_capped(
+pub fn funded_net_and_capped(
     size: i64,
     entry: u64,
     exit: u64,
@@ -540,18 +518,18 @@ pub(crate) fn funded_net_and_capped(
     Ok((raw, raw.clamp(-i128::from(allocated_quote_e6), i128::from(n))))
 }
 
-pub(crate) const SECURE_RATE_BPS_PER_HOUR: u128 = 200;
-pub(crate) const SECURE_STEP_CAP_BPS: u128 = 100;
-pub(crate) const SECURE_SLOT_MS: u128 = 400;
-pub(crate) const SECURE_BREAKER_BPS: u128 = 500;
-pub(crate) const SECURE_BREAKER_BOTH_SIDES: bool = true;
-pub(crate) const SECURE_IM_FLOOR_BPS: u16 = 5_000;
+pub const SECURE_RATE_BPS_PER_HOUR: u128 = 200;
+pub const SECURE_STEP_CAP_BPS: u128 = 100;
+pub const SECURE_SLOT_MS: u128 = 400;
+pub const SECURE_BREAKER_BPS: u128 = 500;
+pub const SECURE_BREAKER_BOTH_SIDES: bool = true;
+pub const SECURE_IM_FLOOR_BPS: u16 = 5_000;
 const HOUR_MS: u128 = 3_600_000;
-pub(crate) const SECURE_ONE_Q32: u128 = 1 << 32;
-pub(crate) const SECURE_P_MAX_Q32: u128 = (u64::MAX as u128) << 32;
+pub const SECURE_ONE_Q32: u128 = 1 << 32;
+pub const SECURE_P_MAX_Q32: u128 = (u64::MAX as u128) << 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SecureStepMode {
+pub enum SecureStepMode {
     Fresh,
     Open,
     Frozen,
@@ -565,7 +543,7 @@ pub struct SecureReferenceVNext {
     pub unix: i64,
 }
 
-pub(crate) fn secure_reference_step(
+pub fn secure_reference_step(
     r: SecureReferenceVNext,
     p: u64,
     slot: u64,
@@ -608,7 +586,7 @@ fn secure_reference_step_at(
 }
 
 #[inline(never)]
-pub(crate) fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
+pub fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
     let pq = u128::from(p) << 32;
     let s = U256::from_u128(if buy { pq.max(ref_q32) } else { pq.min(ref_q32) });
     let (pd, one) = (U256::from_u64(p.max(1)), U256::from_u128(SECURE_ONE_Q32));
@@ -632,7 +610,7 @@ pub(crate) fn secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> u64 {
 }
 
 #[inline(never)]
-pub(crate) fn checked_secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> Result<u64, MathError> {
+pub fn checked_secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> Result<u64, MathError> {
     let pq = u128::from(p) << 32;
     let s = U256::from_u128(if buy { pq.max(ref_q32) } else { pq.min(ref_q32) });
     let (pd, one) = (U256::from_u64(p.max(1)), U256::from_u128(SECURE_ONE_Q32));
@@ -648,7 +626,7 @@ pub(crate) fn checked_secure_fill(x: u64, p: u64, ref_q32: u128, buy: bool) -> R
     }
 }
 
-pub(crate) fn secure_breaker_allows_open(p: u64, ref_q32: u128, buy: bool) -> bool {
+pub fn secure_breaker_allows_open(p: u64, ref_q32: u128, buy: bool) -> bool {
     secure_breaker_allows_open_sides(p, ref_q32, buy, SECURE_BREAKER_BOTH_SIDES)
 }
 
@@ -663,14 +641,13 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use pinocchio::error::ProgramError;
     use solana_sha256_hasher::hash;
     use std::{string::String, vec::Vec};
 
     const FIXTURE: &[u8] = include_bytes!(
-        "../../../../../tests/fixtures/permissionless-collateral-s00p/conversion-kernel-r2.json"
+        "../tests/fixtures/conversion-kernel-r2.json"
     );
-    const FIXTURE_SHA256: &str = "ccd8b29d553e17cc35449a811efc201004b25b612868d7d6929def0a3112cd43";
+    const FIXTURE_SHA256: &str = "98ba1436aa8aadd4d5fb854a52a7f882bdd8db0f317dd785da7a7e30fc39d667";
 
     #[test]
     fn mul_q64_limb_shift_matches_generic_division() {
@@ -1095,11 +1072,10 @@ mod tests {
         let root = Parser::parse(FIXTURE);
         assert_eq!(
             root.get("marker").text(),
-            "COLLATERAL_S00P_CONVERSION_KERNEL_R2_HOST_ONLY"
+            "COLADA_CONVERSION_KERNEL_R2_HOST_ONLY"
         );
         let stage = root.get("stage");
         assert!(!stage.get("runtime_safety").boolean());
-        assert!(!stage.get("s01_ready").boolean());
         assert!(!stage.get("abi_reserved").boolean());
         assert!(!stage.get("release_ready").boolean());
         root
@@ -1704,26 +1680,11 @@ mod tests {
         );
         assert_eq!(U256::from_limbs_le([1, 2, 3, 4]), U256([1, 2, 3, 4]));
 
-        let mappings = [
-            (MathError::InvalidDecimals, 72),
-            (MathError::DefaultValueRejected, 72),
-            (MathError::IdentityAddressMismatch, 73),
-            (MathError::ZeroPrice, 29),
-            (MathError::InvertedPriceBounds, 29),
-            (MathError::OutOfEnvelope, 12),
-            (MathError::U256Overflow, 12),
-            (MathError::ZeroDenominator, 12),
-            (MathError::InvalidNarrowing, 12),
-            (MathError::U256Underflow, 13),
-            (MathError::InsufficientFreeAtoms, 22),
-        ];
-        for (error, code) in mappings {
-            assert_eq!(ProgramError::from(error), ProgramError::Custom(code));
-        }
+
     }
 
     #[test]
-    fn d2s_kernel_matches_secure_reference_vectors() {
+    fn secure_reference_matches_reference_vectors() {
         let steps: [(u128, u128, u64, i64, u64, u64, i64, SecureStepMode, u128, u64, i64); 57] = [
             (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000000, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
             (200, 4294967296000000000, 400000000, 1790000000, 2000000000, 400000002, 1790000000, SecureStepMode::Fresh, 4294967296000000000, 400000000, 1790000000),
@@ -1833,22 +1794,6 @@ mod tests {
             assert_eq!(secure_breaker_allows_open_sides(p, ref_q32, buy, false), one);
             assert_eq!(secure_breaker_allows_open(p, ref_q32, buy), both);
         }
-        let caps: [(u128, (u128, u128), (u128, u128)); 9] = [
-            (0, (0, 0), (0, 0)),
-            (145046, (3626150, 5076610), (14504, 36261)),
-            (1448615, (36215375, 50701525), (144861, 362153)),
-            (10000000, (250000000, 350000000), (1000000, 2500000)),
-            (20000000, (500000000, 700000000), (2000000, 5000000)),
-            (28571428, (714285700, 999999980), (2857142, 7142857)),
-            (28571429, (714285725, 1000000015), (2857142, 7142857)),
-            (100000000, (2500000000, 3500000000), (10000000, 25000000)),
-            (1000000000, (25000000000, 35000000000), (100000000, 250000000)),
-        ];
-        for (floor, secure, interim) in caps {
-            use crate::instructions::collateral_vnext_oracle::mixed_bounded::point_caps;
-            assert_eq!(point_caps(floor, true), secure);
-            assert_eq!(point_caps(floor, false), interim);
-        }
         let n = 250_000_000;
         let open = secure_reference_step(
             SecureReferenceVNext { lifted: true, ref_q32: 1_000_000_000 << 32, slot: 100 - 1, unix: 10 },
@@ -1869,7 +1814,7 @@ mod tests {
     }
 
     #[test]
-    fn d2_funded_net_matches_n613_reference_vectors() {
+    fn funded_net_matches_reference_vectors() {
         const CASES: [(i64, u64, u64, i128, i128, u64, i128, i128); 14] = [
             (250000000, 1000, 35925, 0, 0, 100000000, 8731250000, 250000000),
             (-250000000, 1000, 35925, 0, 0, 100000000, -8731250000, -100000000),
