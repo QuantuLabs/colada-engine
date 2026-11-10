@@ -406,3 +406,21 @@ fn new_rejects_maintenance_above_initial_margin() {
     params.initial_margin_bps = 1_000;
     let _ = RiskEngine::new(params);
 }
+
+#[test]
+fn deposit_fee_credits_rejects_amount_beyond_i128() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap();
+
+    for amount in [1u128 << 127, u128::MAX] {
+        assert_eq!(
+            engine.deposit_fee_credits(user, amount, 0),
+            Err(RiskError::Overflow)
+        );
+    }
+    engine.deposit_fee_credits(user, i128::MAX as u128, 0).unwrap();
+    assert_eq!(engine.deposit_fee_credits(user, 1, 0), Err(RiskError::Overflow));
+    assert_eq!(engine.accounts[user as usize].fee_credits.get(), i128::MAX);
+    assert_eq!(engine.vault.get(), i128::MAX as u128);
+    assert_eq!(engine.insurance_fund.balance.get(), i128::MAX as u128);
+}

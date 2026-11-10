@@ -1390,6 +1390,10 @@ impl RiskEngine {
         if idx as usize >= MAX_ACCOUNTS || !self.is_used(idx as usize) {
             return Err(RiskError::Unauthorized);
         }
+        let new_credits = i128::try_from(amount)
+            .ok()
+            .and_then(|a| self.accounts[idx as usize].fee_credits.get().checked_add(a))
+            .ok_or(RiskError::Overflow)?;
         self.set_current_slot_monotonic(now_slot)?;
 
         // Wrapper transferred tokens into vault
@@ -1402,9 +1406,7 @@ impl RiskEngine {
         self.insurance_fund.fee_revenue = self.insurance_fund.fee_revenue + amount;
 
         // Credit the account
-        self.accounts[idx as usize].fee_credits = self.accounts[idx as usize]
-            .fee_credits
-            .saturating_add(amount as i128);
+        self.accounts[idx as usize].fee_credits = I128::new(new_credits);
 
         Ok(())
     }
