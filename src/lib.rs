@@ -8,3 +8,4 @@ pub mod discovery;
 pub mod funding;
 pub mod margin;
 pub mod math;
+pub mod solvency;
