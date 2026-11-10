@@ -491,3 +491,14 @@ fn equity_preserves_large_capital_cancellation() {
     assert_eq!(engine.account_equity(&engine.accounts[user]), 100);
     assert_eq!(engine.account_equity_mtm_at_oracle(&engine.accounts[user], 1_000_000), 100);
 }
+
+#[test]
+fn zero_rate_funding_catches_up_after_idle_deposit() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap();
+    engine.deposit(user, 0, 31_536_001).unwrap();
+    engine.keeper_crank(user, 31_536_001, 1_000_000, 0, false).unwrap();
+    assert_eq!(engine.last_funding_slot, 31_536_001);
+    engine.set_funding_rate_for_next_interval(1).unwrap();
+    assert_eq!(engine.accrue_funding(63_072_002, 1_000_000), Err(RiskError::Overflow));
+}

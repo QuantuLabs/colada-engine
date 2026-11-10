@@ -2411,6 +2411,10 @@ impl RiskEngine {
         self.validate_funding_rate(funding_rate)?;
 
         if dt > 31_536_000 {
+            if funding_rate == 0 {
+                self.last_funding_slot = now_slot;
+                return Ok(());
+            }
             return Err(RiskError::Overflow);
         }
 
