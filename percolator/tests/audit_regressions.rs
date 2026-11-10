@@ -481,3 +481,13 @@ fn inflows_that_overflow_vault_are_rejected() {
     assert_eq!(engine.accounts[a as usize].capital.get(), u128::MAX);
     assert_eq!(engine.num_used_accounts, 1);
 }
+
+#[test]
+fn equity_preserves_large_capital_cancellation() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap() as usize;
+    engine.accounts[user].capital = U128::new(i128::MAX as u128 + 100);
+    engine.accounts[user].pnl = I128::new(-i128::MAX);
+    assert_eq!(engine.account_equity(&engine.accounts[user]), 100);
+    assert_eq!(engine.account_equity_mtm_at_oracle(&engine.accounts[user], 1_000_000), 100);
+}

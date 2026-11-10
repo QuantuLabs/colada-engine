@@ -2865,12 +2865,11 @@ impl RiskEngine {
     /// specifically need realized-only equity.
     #[inline]
     pub fn account_equity(&self, account: &Account) -> u128 {
-        let cap_i = u128_to_i128_clamped(account.capital.get());
-        let eq_i = cap_i.saturating_add(account.pnl.get());
-        if eq_i > 0 {
-            eq_i as u128
+        let pnl = account.pnl.get();
+        if pnl >= 0 {
+            account.capital.get().saturating_add(pnl as u128)
         } else {
-            0
+            account.capital.get().saturating_sub(neg_i128_to_u128(pnl))
         }
     }
 
@@ -2889,14 +2888,16 @@ impl RiskEngine {
             Ok(m) => m,
             Err(_) => return 0, // Overflow => worst-case equity
         };
-        let cap_i = u128_to_i128_clamped(account.capital.get());
-        let neg_pnl = core::cmp::min(account.pnl.get(), 0);
-        let eff_pos = self.effective_pos_pnl(account.pnl.get());
-        let eq_i = cap_i
-            .saturating_add(neg_pnl)
-            .saturating_add(u128_to_i128_clamped(eff_pos))
-            .saturating_add(mark);
-        let eq = if eq_i > 0 { eq_i as u128 } else { 0 };
+        let pnl = account.pnl.get();
+        let mut positive = [account.capital.get(), self.effective_pos_pnl(pnl), clamp_pos_i128(mark)];
+        for mut debt in [core::cmp::min(pnl, 0).unsigned_abs(), core::cmp::min(mark, 0).unsigned_abs()] {
+            for value in &mut positive {
+                let paid = core::cmp::min(*value, debt);
+                *value -= paid;
+                debt -= paid;
+            }
+        }
+        let eq = positive[0].saturating_add(positive[1]).saturating_add(positive[2]);
         // Subtract fee debt (negative fee_credits = unpaid maintenance fees)
         let fee_debt = if account.fee_credits.is_negative() {
             neg_i128_to_u128(account.fee_credits.get())
