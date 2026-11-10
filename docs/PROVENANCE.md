@@ -130,4 +130,6 @@ the root crate; see [Verification](VERIFICATION.md).
 
 ## Licence
 
-The upstream [Apache-2.0 licence](../LICENSE) is retained unchanged.
+The upstream [Apache-2.0 licence](../LICENSE) is retained unchanged. The root crate and
+the changes to the Percolator-derived files are Copyright 2026 QuantuLabs; the
+[NOTICE](../NOTICE) file records both.

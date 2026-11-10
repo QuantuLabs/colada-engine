@@ -1,9 +1,10 @@
-# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
+# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs.
 [package]
 name = "colada-engine"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+authors = ["QuantuLabs"]
 description = "Stateless no_std numerical kernel of the Colada perpetual-futures risk engine"
 publish = false
 repository = "https://github.com/QuantuLabs/colada-engine"

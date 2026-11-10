@@ -1,4 +1,4 @@
-*Archived upstream proof and audit notes. Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors (source paths renamed to `src/colada.rs`).*
+*Archived upstream proof and audit notes. Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs (source paths renamed to `src/colada.rs`).*
 
 # Kani Proof Timing Report
 Generated: 2026-02-12

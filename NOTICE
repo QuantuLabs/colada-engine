@@ -1,0 +1,8 @@
+colada-engine
+Copyright 2026 QuantuLabs
+
+This product includes software derived from Percolator
+(https://github.com/aeyakovenko/percolator) at commit
+d8dad9893f384f122769b0c5bc6cd17fbc426edc, by Anatoly Yakovenko and
+contributors, licensed under the Apache License, Version 2.0. Files derived
+from it carry a notice on their first line.

@@ -1,4 +1,4 @@
-// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
+// Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs.
 //! Comprehensive Fuzzing Suite for the Risk Engine
 //!
 //! ## Running Tests

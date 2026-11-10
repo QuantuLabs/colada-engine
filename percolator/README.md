@@ -1,6 +1,6 @@
 # Percolator engine, as modified by Colada
 
-*Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.*
+*Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs.*
 
 This directory is the [Percolator](https://github.com/aeyakovenko/percolator)
 slab accounting engine, forked at `d8dad9893f384f122769b0c5bc6cd17fbc426edc`

@@ -114,5 +114,5 @@ state. See [Integration](docs/INTEGRATION.md).
 
 ## Licence
 
-[Apache-2.0](LICENSE). Forked from [aeyakovenko/percolator](https://github.com/aeyakovenko/percolator)
-at `d8dad9893f384f122769b0c5bc6cd17fbc426edc`; modified by Colada contributors.
+[Apache-2.0](LICENSE). Copyright 2026 QuantuLabs; see [NOTICE](NOTICE). Forked from [aeyakovenko/percolator](https://github.com/aeyakovenko/percolator)
+at `d8dad9893f384f122769b0c5bc6cd17fbc426edc`; modified by QuantuLabs.

@@ -1,4 +1,4 @@
-*Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors. Specification of the engine in this directory, not of the root `colada-engine` crate.*
+*Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs. Specification of the engine in this directory, not of the root `colada-engine` crate.*
 
 # Risk Engine Spec (Source of Truth) — v7 (Fee-Debt-as-Liability + Crank Warmup + Initial Margin + Funding Anti-Retroactivity + Position Flip + Fee Ceiling + Warmup Restart on Mark)
 **Design:** **Protected Principal + Junior Profit Claims with Global Haircut Ratio**  

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by Colada contributors.
+# Derived from aeyakovenko/percolator at d8dad98 (Apache-2.0); modified by QuantuLabs.
 # Sequential, bounded Kani proofs. Never overwrite the historical matrix.
 set -euo pipefail
 
