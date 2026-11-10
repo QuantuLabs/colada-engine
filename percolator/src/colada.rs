@@ -3489,6 +3489,7 @@ impl RiskEngine {
                 // Increase protected principal by y
                 let new_cap = add_u128(self.accounts[idx as usize].capital.get(), y);
                 self.set_capital(idx as usize, new_cap);
+                self.pay_fee_debt_from_capital(idx);
             }
 
             // Advance warmup time base and update slope (spec §5.4)

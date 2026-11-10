@@ -435,3 +435,23 @@ fn gc_keeps_account_with_prepaid_fee_credits() {
     assert!(engine.is_used(user as usize));
     assert_eq!(engine.accounts[user as usize].fee_credits.get(), 1);
 }
+
+#[test]
+fn warmup_conversion_sweeps_fee_debt() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap();
+
+    engine.set_pnl(user as usize, 100);
+    engine.accounts[user as usize].fee_credits = I128::new(-10);
+    engine.accounts[user as usize].warmup_slope_per_step = U128::new(1);
+    engine.accounts[user as usize].warmup_started_at_slot = 0;
+    engine.vault = U128::new(100);
+    engine.current_slot = 100;
+
+    engine.settle_warmup_to_capital(user).unwrap();
+
+    assert_eq!(engine.accounts[user as usize].fee_credits.get(), 0);
+    assert_eq!(engine.accounts[user as usize].capital.get(), 90);
+    assert_eq!(engine.insurance_fund.balance.get(), 10);
+    assert!(engine.check_conservation(1_000_000));
+}
