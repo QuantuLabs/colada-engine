@@ -1024,6 +1024,35 @@ impl RiskEngine {
     // Account Management
     // ========================================
 
+    fn check_inflow(
+        &self,
+        amount: u128,
+        to_insurance: u128,
+        to_capital: u128,
+        capital: u128,
+    ) -> Result<()> {
+        let ok = self.vault.get().checked_add(amount).is_some()
+            && self
+                .insurance_fund
+                .balance
+                .get()
+                .checked_add(to_insurance)
+                .is_some()
+            && self
+                .insurance_fund
+                .fee_revenue
+                .get()
+                .checked_add(to_insurance)
+                .is_some()
+            && self.c_tot.get().checked_add(to_capital).is_some()
+            && capital.checked_add(to_capital).is_some();
+        if ok {
+            Ok(())
+        } else {
+            Err(RiskError::Overflow)
+        }
+    }
+
     /// Add a new user account
     pub fn add_user(&mut self, fee_payment: u128) -> Result<u16> {
         // Use O(1) counter instead of O(N) count_used() (fixes H2: TOCTOU fee bypass)
@@ -1040,6 +1069,7 @@ impl RiskEngine {
 
         // Bug #4 fix: Compute excess payment to credit to user capital
         let excess = fee_payment.saturating_sub(required_fee);
+        self.check_inflow(fee_payment, required_fee, excess, 0)?;
 
         // Pay fee to insurance (fee tokens are deposited into vault)
         // Account for FULL fee_payment in vault, not just required_fee
@@ -1100,6 +1130,7 @@ impl RiskEngine {
 
         // Bug #4 fix: Compute excess payment to credit to LP capital
         let excess = fee_payment.saturating_sub(required_fee);
+        self.check_inflow(fee_payment, required_fee, excess, 0)?;
 
         // Pay fee to insurance (fee tokens are deposited into vault)
         // Account for FULL fee_payment in vault, not just required_fee
@@ -1394,6 +1425,7 @@ impl RiskEngine {
             .ok()
             .and_then(|a| self.accounts[idx as usize].fee_credits.get().checked_add(a))
             .ok_or(RiskError::Overflow)?;
+        self.check_inflow(amount, amount, 0, 0)?;
         self.set_current_slot_monotonic(now_slot)?;
 
         // Wrapper transferred tokens into vault
@@ -2646,6 +2678,12 @@ impl RiskEngine {
         if !self.is_used(idx as usize) {
             return Err(RiskError::AccountNotFound);
         }
+        self.check_inflow(
+            amount,
+            amount,
+            amount,
+            self.accounts[idx as usize].capital.get(),
+        )?;
 
         let account = &mut self.accounts[idx as usize];
         let mut deposit_remaining = amount;
@@ -3521,6 +3559,7 @@ impl RiskEngine {
     /// Adds tokens to both vault and insurance fund.
     /// Returns true if the top-up brings insurance above the risk reduction threshold.
     pub fn top_up_insurance_fund(&mut self, amount: u128) -> Result<bool> {
+        self.check_inflow(amount, amount, 0, 0)?;
         // Add to vault
         self.vault = U128::new(add_u128(self.vault.get(), amount));
 

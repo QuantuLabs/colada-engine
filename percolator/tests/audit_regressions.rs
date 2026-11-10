@@ -418,8 +418,13 @@ fn deposit_fee_credits_rejects_amount_beyond_i128() {
             Err(RiskError::Overflow)
         );
     }
-    engine.deposit_fee_credits(user, i128::MAX as u128, 0).unwrap();
-    assert_eq!(engine.deposit_fee_credits(user, 1, 0), Err(RiskError::Overflow));
+    engine
+        .deposit_fee_credits(user, i128::MAX as u128, 0)
+        .unwrap();
+    assert_eq!(
+        engine.deposit_fee_credits(user, 1, 0),
+        Err(RiskError::Overflow)
+    );
     assert_eq!(engine.accounts[user as usize].fee_credits.get(), i128::MAX);
     assert_eq!(engine.vault.get(), i128::MAX as u128);
     assert_eq!(engine.insurance_fund.balance.get(), i128::MAX as u128);
@@ -454,4 +459,25 @@ fn warmup_conversion_sweeps_fee_debt() {
     assert_eq!(engine.accounts[user as usize].capital.get(), 90);
     assert_eq!(engine.insurance_fund.balance.get(), 10);
     assert!(engine.check_conservation(1_000_000));
+}
+
+#[test]
+fn inflows_that_overflow_vault_are_rejected() {
+    let mut engine = new_test_engine(default_params());
+    let a = engine.add_user(u128::MAX).unwrap();
+    assert_eq!(engine.add_user(1), Err(RiskError::Overflow));
+    assert_eq!(
+        engine.add_lp([1u8; 32], [2u8; 32], 1),
+        Err(RiskError::Overflow)
+    );
+    assert_eq!(engine.deposit(a, 1, 0), Err(RiskError::Overflow));
+    assert_eq!(engine.top_up_insurance_fund(1), Err(RiskError::Overflow));
+    assert_eq!(
+        engine.deposit_fee_credits(a, 1, 0),
+        Err(RiskError::Overflow)
+    );
+    assert_eq!(engine.vault.get(), u128::MAX);
+    assert_eq!(engine.c_tot.get(), u128::MAX);
+    assert_eq!(engine.accounts[a as usize].capital.get(), u128::MAX);
+    assert_eq!(engine.num_used_accounts, 1);
 }
