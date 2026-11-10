@@ -1575,6 +1575,9 @@ impl RiskEngine {
                 if account.pnl.is_positive() {
                     continue;
                 }
+                if account.fee_credits.is_positive() {
+                    continue;
+                }
             }
 
             // If flat, funding is irrelevant — snap to global so dust can be collected.

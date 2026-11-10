@@ -424,3 +424,14 @@ fn deposit_fee_credits_rejects_amount_beyond_i128() {
     assert_eq!(engine.vault.get(), i128::MAX as u128);
     assert_eq!(engine.insurance_fund.balance.get(), i128::MAX as u128);
 }
+
+#[test]
+fn gc_keeps_account_with_prepaid_fee_credits() {
+    let mut engine = new_test_engine(default_params());
+    let user = engine.add_user(0).unwrap();
+    engine.deposit_fee_credits(user, 1, 0).unwrap();
+
+    assert_eq!(engine.garbage_collect_dust(), 0);
+    assert!(engine.is_used(user as usize));
+    assert_eq!(engine.accounts[user as usize].fee_credits.get(), 1);
+}
