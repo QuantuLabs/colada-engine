@@ -655,6 +655,10 @@ impl MatchingEngine for NoOpMatcher {
 
 impl RiskEngine {
     fn sanitize_params(mut params: RiskParams) -> RiskParams {
+        assert!(
+            params.maintenance_margin_bps <= params.initial_margin_bps,
+            "maintenance_margin_bps must not exceed initial_margin_bps"
+        );
         // A zero warmup period defeats the PnL timelock. Keep the API infallible by
         // flooring to one slot instead of accepting instant warmup silently.
         if params.warmup_period_slots == 0 {
@@ -799,6 +803,9 @@ impl RiskEngine {
             || self.next_free.iter().any(|next| *next != 0)
         {
             return Err(RiskError::Unauthorized);
+        }
+        if params.maintenance_margin_bps > params.initial_margin_bps {
+            return Err(RiskError::Overflow);
         }
 
         let params = Self::sanitize_params(params);

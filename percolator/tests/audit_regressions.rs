@@ -382,3 +382,27 @@ fn liquidation_mark_gain_restarts_warmup() {
         "mark gain at liquidation must restart warmup before conversion"
     );
 }
+
+#[test]
+fn init_in_place_rejects_maintenance_above_initial_margin() {
+    let mut params = default_params();
+    params.maintenance_margin_bps = 2_000;
+    params.initial_margin_bps = 1_000;
+    let layout = std::alloc::Layout::new::<RiskEngine>();
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut RiskEngine };
+    assert!(!ptr.is_null());
+    let mut engine = unsafe { Box::from_raw(ptr) };
+    assert_eq!(engine.init_in_place(params), Err(RiskError::Overflow));
+
+    params.maintenance_margin_bps = 1_000;
+    assert!(engine.init_in_place(params).is_ok());
+}
+
+#[test]
+#[should_panic(expected = "maintenance_margin_bps must not exceed initial_margin_bps")]
+fn new_rejects_maintenance_above_initial_margin() {
+    let mut params = default_params();
+    params.maintenance_margin_bps = 2_000;
+    params.initial_margin_bps = 1_000;
+    let _ = RiskEngine::new(params);
+}
